@@ -80,6 +80,7 @@
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
       <BuildStlModules>true</BuildStlModules>
+      <AdditionalIncludeDirectories>$(SOlutionDir)..\libksn_modular\ksn\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -98,6 +99,7 @@
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
       <BuildStlModules>true</BuildStlModules>
+      <AdditionalIncludeDirectories>$(SOlutionDir)..\libksn_modular\ksn\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -116,6 +118,7 @@
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
       <BuildStlModules>true</BuildStlModules>
+      <AdditionalIncludeDirectories>$(SOlutionDir)..\libksn_modular\ksn\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -134,6 +137,7 @@
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
       <BuildStlModules>true</BuildStlModules>
+      <AdditionalIncludeDirectories>$(SOlutionDir)..\libksn_modular\ksn\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -143,6 +147,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_crc.ixx" />
+    <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_math_linear_algebra.ixx" />
+    <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_type_traits.ixx" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
