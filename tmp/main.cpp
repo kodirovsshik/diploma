@@ -254,23 +254,26 @@ namespace detail
 
 
 	template<class T>
-	concept trivial_type = std::is_trivial_v<T> || std::is_scalar_v<T>;
+	concept trivial_type = std::is_trivial_v<T>;
 	template<class T>
 	concept pointer = std::is_pointer_v<T>;
+	template<class T, class To>
+	concept some_pointer_to = pointer<T> && ksn::same_to_cvref<To, std::remove_pointer_t<T>>;
 	template<class T>
-	concept span_ish = requires(T x)
+	concept span_like = requires(T x)
 	{
-		{ x.data() } -> pointer;
+		typename T::element_type;
+		{ x.data() } -> some_pointer_to<typename T::element_type>;
 		{ x.size() } -> ksn::same_to_cvref<size_t>;
 	};
+
+
 
 	template<class T>
 	struct serializer 
 	{
 		void operator()(std::ostream& os, uint64_t& crc, const T& x) = delete;
 	};
-
-
 	template<trivial_type T>
 	struct serializer<T>
 	{
@@ -290,6 +293,7 @@ namespace detail
 				serializer<std::remove_cvref_t<decltype(elem)>>{}(os, crc, elem);
 		}
 	};
+
 
 	void serialize_tuple(std::ostream&, uint64_t&) {}
 
