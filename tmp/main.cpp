@@ -192,146 +192,223 @@ namespace detail
 	template<
 		size_t layer,
 		class fp_t,
-		size_t _topology_size,
-		std::array<nn_layer_descriptor, _topology_size> topology,
+		size_t _convolution_topology_size,
+		std::array<nn_layer_descriptor, _convolution_topology_size> convolution_topology,
 		nn_image_stage_descriptor input_image_descriptor,
 		class... Kernels
 	>
 	consteval auto calculate_kernels_tuple_type()
 	{
-		if constexpr (layer == _topology_size)
+		if constexpr (layer == _convolution_topology_size)
 			return std::type_identity<std::tuple<Kernels...>>{};
 		else
 		{
-			constexpr size_t current_image_count = (layer == 0) ? input_image_descriptor.count : topology[layer - 1].output_image_count;
-			constexpr size_t next_image_count = topology[layer].output_image_count;
+			constexpr size_t current_image_count = (layer == 0) ? input_image_descriptor.count : convolution_topology[layer - 1].output_image_count;
+			constexpr size_t next_image_count = convolution_topology[layer].output_image_count;
 			constexpr size_t kernels_count = current_image_count * next_image_count;
 
-			using kernel_t = ksn::hmatrix<fp_t, topology[layer].kernel_height, topology[layer].kernel_width>;
+			using kernel_t = ksn::hmatrix<fp_t, convolution_topology[layer].kernel_height, convolution_topology[layer].kernel_width>;
 			using new_kernel_array_t = std::array<kernel_t, kernels_count>;
 
-			return calculate_kernels_tuple_type<layer + 1, fp_t, _topology_size, topology, input_image_descriptor, Kernels..., new_kernel_array_t>();
+			return calculate_kernels_tuple_type<layer + 1, fp_t, _convolution_topology_size, convolution_topology, input_image_descriptor, Kernels..., new_kernel_array_t>();
 		}
 	}
 
 	template<
 		size_t layer,
 		class fp_t,
-		size_t _topology_size,
-		std::array<nn_layer_descriptor, _topology_size> topology,
+		size_t _convolution_topology_size,
+		std::array<nn_layer_descriptor, _convolution_topology_size> convolution_topology,
 		nn_image_stage_descriptor input_image_descriptor,
 		class... Kernels
 	>
 	consteval auto calculate_offsets_tuple_type()
 	{
-		if constexpr (layer == _topology_size)
+		if constexpr (layer == _convolution_topology_size)
 			return std::type_identity<std::tuple<Kernels...>>{};
 		else
 		{
-			constexpr size_t offsets_count = topology[layer].output_image_count;
-			using new_offset_array_t = std::array<fp_t, offsets_count>;
+			constexpr size_t offsets_count = convolution_topology[layer].output_image_count;
+			using new_offset_array_t = ksn::hvector<fp_t, offsets_count>;
 
-			return calculate_offsets_tuple_type<layer + 1, fp_t, _topology_size, topology, input_image_descriptor, Kernels..., new_offset_array_t>();
+			return calculate_offsets_tuple_type<layer + 1, fp_t, _convolution_topology_size, convolution_topology, input_image_descriptor, Kernels..., new_offset_array_t>();
 		}
 	}
 
 	template<
 		class fp_t,
-		size_t _topology_size,
-		std::array<nn_layer_descriptor, _topology_size> topology,
+		size_t _convolution_topology_size,
+		std::array<nn_layer_descriptor, _convolution_topology_size> convolution_topology,
 		nn_image_stage_descriptor input_image_descriptor
 	>
-	using kernels_tuple_t = typename decltype(calculate_kernels_tuple_type<0, fp_t, _topology_size, topology, input_image_descriptor>())::type;
+	using kernels_tuple_t = typename decltype(calculate_kernels_tuple_type<0, fp_t, _convolution_topology_size, convolution_topology, input_image_descriptor>())::type;
 	
 	template<
 		class fp_t,
-		size_t _topology_size,
-		std::array<nn_layer_descriptor, _topology_size> topology,
+		size_t _convolution_topology_size,
+		std::array<nn_layer_descriptor, _convolution_topology_size> convolution_topology,
 		nn_image_stage_descriptor input_image_descriptor
 	>
-	using offsets_tuple_t = typename decltype(calculate_offsets_tuple_type<0, fp_t, _topology_size, topology, input_image_descriptor>())::type;
+	using offsets_tuple_t = typename decltype(calculate_offsets_tuple_type<0, fp_t, _convolution_topology_size, convolution_topology, input_image_descriptor>())::type;
 
 
 
-	template<class T>
-	concept trivial_type = std::is_trivial_v<T>;
-	template<class T>
-	concept pointer = std::is_pointer_v<T>;
-	template<class T, class To>
-	concept some_pointer_to = pointer<T> && ksn::same_to_cvref<To, std::remove_pointer_t<T>>;
-	template<class T>
-	concept span_like = requires(T x)
+};
+
+
+
+
+class crc64_calculator
+{
+	uint64_t crc = ksn::crc64_ecma_initial();
+
+public:
+	constexpr void update(const void* data, size_t size) noexcept
 	{
-		typename T::element_type;
-		{ x.data() } -> some_pointer_to<typename T::element_type>;
-		{ x.size() } -> ksn::same_to_cvref<size_t>;
-	};
-
-
-
-	template<class T>
-	struct serializer 
+		this->crc = ksn::crc64_ecma_update(data, size, crc);
+	}
+	constexpr uint64_t value() const noexcept
 	{
-		void operator()(std::ostream& os, uint64_t& crc, const T& x) = delete;
-	};
-	template<trivial_type T>
-	struct serializer<T>
-	{
-		void operator()(std::ostream& os, uint64_t& crc, const T& x)
-		{
-			os.write((const char*)&x, sizeof(x));
-			crc = ksn::crc64_ecma_update(&x, sizeof(x), crc);
-		}
-	};
-	
-	template<std::ranges::range T> requires(!trivial_type<T>)
-	struct serializer<T>
-	{
-		void operator()(std::ostream& os, uint64_t& crc, const T& range)
-		{
-			for (auto& elem : range)
-				serializer<std::remove_cvref_t<decltype(elem)>>{}(os, crc, elem);
-		}
-	};
-
-
-	void serialize_tuple(std::ostream&, uint64_t&) {}
-
-	template<class T, class... Rest>
-	void serialize_tuple(std::ostream& os, uint64_t& crc, const T& x, const Rest& ...rest)
-	{
-		serializer<T>{}(os, crc, x);
-		serialize_tuple(os, crc, rest...);
+		return this->crc;
 	}
 };
 
-template<class... T>
-void serialize_tuple(std::ostream& os, uint64_t& crc, const std::tuple<T...>& t)
+namespace detail
 {
-	apply_extra(&detail::serialize_tuple<T...>, t, os, crc);
-}
-template<class T>
-void serialize(std::ostream& out, uint64_t& crc, const T& x)
-{
-	detail::serializer<T>{}(out, crc, x);
-}
-template<class T>
-void serialize_memory(std::ostream& out, uint64_t& crc, const T& x)
-{
-	using char_arr_t = const char[sizeof(T)];
-	auto& arr_ref = *(char_arr_t*)&x;
-	serialize(out, crc, arr_ref);
+	template<class T>
+	concept trivial_type = std::is_trivially_copyable_v<T>;
+
+
+	using sink = std::ostream&;
+
+	template<class...>
+	constexpr bool always_false = false;
+
+	template<class R>
+	concept trivial_contiguous_range =
+		std::ranges::range<R> &&
+		std::contiguous_iterator<std::ranges::iterator_t<R>> &&
+		trivial_type<typename std::iterator_traits<std::ranges::iterator_t<R>>::value_type>;
+
+
+	bool serialize_memory_region(sink os, const void* ptr, size_t size, crc64_calculator& crc)
+	{
+		os.write((const char*)ptr, size);
+		if (os)
+		{
+			crc.update(ptr, size);
+			return true;
+		}
+		return false;
+	}
+	template<class T>
+	bool serialize_object_memory(sink os, const T& x, crc64_calculator& crc)
+	{
+		return serialize_memory_region(os, &x, sizeof(x), crc);
+	}
+
+	template<class T>
+	struct serialize_helper
+	{
+		bool operator()(sink, const T&, crc64_calculator&) const
+		{
+			static_assert(always_false<T>, "Invalid type for serialization");
+			return false;
+		}
+	};
+	
+
+	template<trivial_type T>
+	struct serialize_helper<T>
+	{
+		bool operator()(sink os, const T& x, crc64_calculator& crc) const
+		{
+			return serialize_object_memory(os, x, crc);
+		}
+	};
+	template<std::ranges::range R> requires(!trivial_type<R> && !trivial_contiguous_range<R>)
+	struct serialize_helper<R>
+	{
+		bool operator()(sink os, const R& r, crc64_calculator& crc) const
+		{
+			for (auto& x : r)
+			{
+				const bool ok = serialize_helper<std::remove_cvref_t<decltype(x)>>{}(os, x, crc);
+				if (!ok) return false;
+			}
+			return true;
+		}
+	};
+	template<trivial_contiguous_range R> requires(!trivial_type<R>)
+	struct serialize_helper<R>
+	{
+		bool operator()(sink os, const R& r, crc64_calculator& crc) const
+		{
+			const auto& first_element = *r.begin();
+			const size_t elem_count = std::ranges::distance(r);
+			return serialize_memory_region(os, std::addressof(first_element), sizeof(first_element) * elem_count, crc);
+		}
+	};
+	template<class... Ts> requires(!trivial_type<std::tuple<Ts...>>)
+	struct serialize_helper<std::tuple<Ts...>>
+	{
+		template<size_t level = 0>
+		bool traverse_tuple(sink os, const std::tuple<Ts...>& t, crc64_calculator& crc) const
+		{
+			if constexpr (level == sizeof...(Ts))
+				return true;
+			else
+			{
+				using T = std::tuple_element_t<level, std::tuple<Ts...>>;
+
+				const T& val = std::get<level>(t);
+
+				const bool ok = serialize_helper<T>{}(os, val, crc);
+				if (!ok) 
+					return ok;
+				return traverse_tuple<level + 1>(os, t, crc);
+			}
+		}
+		bool operator()(sink os, const std::tuple<Ts...>& t, crc64_calculator& crc) const
+		{
+			return traverse_tuple(os, t, crc);
+		}
+	};
 }
 
+class serializer_t
+{
+	crc64_calculator crc_;
+	std::ostream& out;
+
+public:
+	serializer_t(std::ostream& os) : out(os) {}
+
+	template<class T>
+	bool operator()(const T& x)
+	{
+		return detail::serialize_helper<T>{}(out, x, crc_);
+	}
+
+	bool write_crc() { return (*this)(this->crc()); }
+	uint64_t crc() const { return this->crc_.value(); }
+
+	explicit operator bool() const noexcept { return (bool)this->out; }
+};
+
+
+
+
+
 template<
-	size_t _topology_size,
-	std::array<nn_layer_descriptor, _topology_size> topology,
+	size_t _convolution_topology_size,
+	std::array<nn_layer_descriptor, _convolution_topology_size> convolution_topology,
 	nn_image_stage_descriptor input_image_descriptor
 >
 class nn_t
 {
 private:
-	static constexpr uint64_t signature = 0x7A7DB4E1DFEF5F9C;
+	static constexpr uint64_t signature = 0x52EEF7E17876A668;
 
 
 public:
@@ -341,41 +418,45 @@ public:
 	template<size_t stage>
 	consteval static auto calculate_image_stage()
 	{
-		if (stage > 0 && stage - 1 >= _topology_size)
+		if (stage > 0 && stage - 1 >= _convolution_topology_size)
 			std::unreachable();
 
 		nn_image_stage_descriptor image = input_image_descriptor;
 		for (size_t i = 0; i < stage; ++i)
 		{
-			image.width = safe_div(image.width - topology[i].kernel_width + 1, topology[i].pooling_factor);
-			image.height = safe_div(image.height - topology[i].kernel_height + 1, topology[i].pooling_factor);
+			image.width = safe_div(image.width - convolution_topology[i].kernel_width + 1, convolution_topology[i].pooling_factor);
+			image.height = safe_div(image.height - convolution_topology[i].kernel_height + 1, convolution_topology[i].pooling_factor);
 		}
-		if (stage != 0) image.count = topology[stage - 1].output_image_count;
+		if (stage != 0) image.count = convolution_topology[stage - 1].output_image_count;
 		return image;
 	}
 
 
-	detail::kernels_tuple_t<fp_t, _topology_size, topology, input_image_descriptor> kernels;
-	detail::offsets_tuple_t<fp_t, _topology_size, topology, input_image_descriptor> offsets;
+	detail::kernels_tuple_t<fp_t, _convolution_topology_size, convolution_topology, input_image_descriptor> kernels;
+	detail::offsets_tuple_t<fp_t, _convolution_topology_size, convolution_topology, input_image_descriptor> offsets;
 
 
-	void write(std::ostream& out)
+	bool write(std::ostream& out)
 	{
-		uint64_t crc = ksn::crc64_ecma_initial();
-		serialize(out, crc, signature);
+		serializer_t serializer(out);
+		serializer(this->signature);
 
-		serialize_memory(out, crc, input_image_descriptor);
-		serialize_memory(out, crc, topology);
-		serialize(out, crc, crc);
+		serializer(input_image_descriptor);
+		serializer(convolution_topology);
+		serializer.write_crc();
 
-		serialize_tuple(out, crc, this->kernels);
-		serialize_tuple(out, crc, this->offsets);
-		serialize(out, crc, crc);
+		serializer(this->kernels);
+		serializer(this->offsets);
+		serializer.write_crc();
+
+		return (bool)serializer;
 	}
 	void write(const std::filesystem::path& p)
 	{
 		std::ofstream fout(p, std::ios_base::out | std::ios_base::binary);
-		this->write(fout);
+		const bool ok = this->write(fout);
+		if (!ok)
+			std::print("Faield to serialize to {}\n", p.string());
 	}
 	void read(std::istream& in)
 	{
@@ -383,18 +464,19 @@ public:
 	}
 };
 
-constexpr auto create_preset_topology_nn()
+constexpr auto create_preset_convolution_topology_nn()
 {
 	constexpr nn_image_stage_descriptor input{ 3, 256, 256 };
 	constexpr nn_layer_descriptor l0{ 5, 5, 5, 2 };
 	constexpr nn_layer_descriptor l1{ 8, 3, 3, 2 };
-	constexpr std::array topology{ l0, l1 };
-	return nn_t<topology.size(), topology, input>();
+	constexpr nn_layer_descriptor l_last{ 1, 3, 3, 1 };
+	constexpr std::array convolution_topology{ l0, l1, l_last };
+	return nn_t<convolution_topology.size(), convolution_topology, input>();
 }
 
 
 int main()
 {
-	auto nn = create_preset_topology_nn();
+	auto nn = create_preset_convolution_topology_nn();
 	nn.write("a.txt");
 }
