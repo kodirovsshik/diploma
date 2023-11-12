@@ -21,9 +21,6 @@
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_math_linear_algebra.ixx">
-      <Filter>Module FIles</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_type_traits.ixx">
       <Filter>Module FIles</Filter>
     </ClCompile>

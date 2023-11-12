@@ -148,7 +148,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_crc.ixx" />
-    <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_math_linear_algebra.ixx" />
     <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_type_traits.ixx" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>

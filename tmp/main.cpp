@@ -6,6 +6,8 @@ import <stdint.h>;
 import <math.h>;
 import <windows.h>;
 
+#undef min
+#undef max
 
 
 template<class F, class Tuple, class... Args, std::size_t... I>
@@ -316,8 +318,8 @@ public:
 template<class T>
 using dynarray = std::vector<T>;
 
-using fp_t = float;
-using vector = dynarray<fp_t>;
+using fp = float;
+using vector = dynarray<fp>;
 using matrix = dynarray<vector>;
 
 #define xassert(cond, fmt, ...) { auto sc = std::source_location::current(); \
@@ -331,15 +333,17 @@ using matrix = dynarray<vector>;
 
 void multiply_mat_vec(const matrix& m, const vector& v, vector& x)
 {
-	x.clear();
+	if (m.size() == 0) 
+	{
+		x.clear();
+		return;
+	}
 
 	const size_t n1 = m.size();
-	if (n1 == 0) return;
 	const size_t n2 = m[0].size();
 	xassert(n2 == v.size(), "incompatible multiplication: {}x{} by {}", n1, n2, v.size());
 
 	x.resize(n1);
-
 	for (size_t i = 0; i < n1; ++i)
 		for (size_t j = 0; j < n2; ++j)
 			x[i] += m[i][j] * v[j];
@@ -355,6 +359,42 @@ void add_vec_vec(const vector& x, vector& y)
 }
 
 
+
+struct activation_function_data
+{
+	using func_ptr = fp(*)(fp);
+	
+	func_ptr f, df;
+};
+
+fp sigma(fp x)
+{
+	return 1 / (1 + ::expf(-x));
+}
+fp sigma_d(fp x)
+{
+	const fp s = sigma(x);
+	return s * (1 - s);
+}
+
+activation_function_data sigmoid{ sigma, sigma_d };
+
+#define lambda(input, val) [](input){ return (val); }
+
+constexpr fp leaky_relu_param = (fp)0.01;
+activation_function_data leaky_relu{
+	lambda(fp x, std::max(x, x * leaky_relu_param)),
+	lambda(fp x, (x < 0) ? leaky_relu_param : 1),
+};
+
+
+void activate_vector(vector& x, const activation_function_data& activator)
+{
+	for (auto& val : x)
+		val = activator.f(val);
+}
+
+
 class nn_t
 {
 private:
@@ -364,14 +404,6 @@ private:
 public:
 	static constexpr size_t input_neurons = 65536;
 
-	static fp_t activation_function(fp_t x)
-	{
-		return std::max<fp_t>(0, x);
-	}
-	static fp_t activation_function_derivative(fp_t x)
-	{
-		return (fp_t)(x >= 0);
-	}
 
 	static void init_vector(vector& arr, size_t n)
 	{
@@ -388,18 +420,28 @@ public:
 	
 	dynarray<matrix> weights;
 	dynarray<vector> biases;
+	dynarray<activation_function_data> activators;
 
 	void create(std::span<const unsigned> layer_sizes)
 	{
-		this->reset();
-		weights.resize(layer_sizes.size());
-		biases.resize(layer_sizes.size());
+		const size_t n = layer_sizes.size();
+		xassert(n >= 2, "Degererate NN topology with {} layers", n + 1);
 
-		for (size_t i = 0; i < layer_sizes.size(); ++i)
+		this->reset();
+
+		weights.resize(n);
+		biases.resize(n);
+		activators.reserve(n);
+
+		for (size_t i = 0; i < n - 1; ++i)
+			activators.push_back(leaky_relu);
+		activators.push_back(sigmoid);
+
+		for (size_t i = 0; i < n; ++i)
 			init_vector(biases[i], layer_sizes[i]);
 
 		size_t prev_layer_size = input_neurons;
-		for (size_t i = 0; i < layer_sizes.size(); ++i)
+		for (size_t i = 0; i < n; ++i)
 		{
 			const size_t next_layer_size = layer_sizes[i];
 			init_matrix(weights[i], next_layer_size, prev_layer_size);
@@ -447,6 +489,7 @@ public:
 	{
 		this->weights.clear();
 		this->biases.clear();
+		this->activators.clear();
 	}
 
 	static vector& get_thread_local_helper_vector()
@@ -464,7 +507,7 @@ public:
 		{
 			multiply_mat_vec(this->weights[i], x, y);
 			add_vec_vec(this->biases[i], y);
-			for (auto& val : y) val = activation_function(val);
+			activate_vector(y, this->activators[i]);
 			std::swap(x, y);
 		}
 	}
@@ -485,7 +528,25 @@ int main()
 	nn.write("a.txt");
 
 	vector x;
-	x.resize(65536);
 
-	nn.eval(x);
+
+	auto clock = std::chrono::steady_clock::now;
+	decltype(clock() - clock()) dt{};
+
+	const size_t n = 1000, k = 50;
+	for (size_t i = 0; i < n + k; ++i)
+	{
+		x.resize(65536);
+		auto t1 = clock();
+		nn.eval(x);
+		auto t2 = clock();
+
+		if (i > k)
+			dt += t2 - t1;
+	}
+
+	std::print("{}", std::chrono::duration_cast<std::chrono::microseconds>(dt / n));
+
+
+	std::ofstream() << x[1];
 }
