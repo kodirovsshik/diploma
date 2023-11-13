@@ -27,5 +27,8 @@
     <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_crc.ixx">
       <Filter>Module FIles</Filter>
     </ClCompile>
+    <ClCompile Include="bmp.ixx">
+      <Filter>Module FIles</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

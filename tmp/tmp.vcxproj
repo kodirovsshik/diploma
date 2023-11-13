@@ -149,6 +149,7 @@
   <ItemGroup>
     <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_crc.ixx" />
     <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_type_traits.ixx" />
+    <ClCompile Include="bmp.ixx" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

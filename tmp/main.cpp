@@ -1,6 +1,7 @@
 
 import std;
 import libksn.crc;
+import diploma.bmp;
 
 import <stdint.h>;
 import <math.h>;
@@ -345,8 +346,11 @@ void multiply_mat_vec(const matrix& m, const vector& v, vector& x)
 
 	x.resize(n1);
 	for (size_t i = 0; i < n1; ++i)
+	{
+		x[i] = 0;
 		for (size_t j = 0; j < n2; ++j)
 			x[i] += m[i][j] * v[j];
+	}
 }
 void add_vec_vec(const vector& x, vector& y)
 {
@@ -513,6 +517,17 @@ public:
 	}
 };
 
+
+
+struct data_pair
+{
+	vector input;
+	vector output;
+};
+
+
+
+
 auto create_preset_topology_nn()
 {
 	const auto layers = { 40u, 10000u, 2u };
@@ -524,6 +539,9 @@ auto create_preset_topology_nn()
 
 int main()
 {
+	bmp_image<fp> img;
+	img.read("C:\\dataset\\training\\Positiv1000\\person1_bacteria_1.bmp", true);
+
 	auto nn = create_preset_topology_nn();
 	nn.write("a.txt");
 
