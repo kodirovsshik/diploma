@@ -14,7 +14,7 @@ class bmp_image
 {
 public:
 	std::array<std::vector<fp_t>, 4> planes;
-	unsigned n_planes_in;
+	unsigned n_planes;
 
 	void read(xpath filename, bool grayscale = false);
 	void reset() noexcept;
@@ -44,8 +44,6 @@ T iabs(T x)
 template<class fp_t>
 void bmp_image<fp_t>::read(xpath filename, bool grayscale)
 {
-	//this->reset();
-
 	ifstream fin(filename, std::ios::in | std::ios::binary);
 	assert_throw(fin.is_open(), "Failed to open file: {}", filename.wstring());
 
@@ -115,8 +113,6 @@ void bmp_image<fp_t>::read(xpath filename, bool grayscale)
 		plane.resize(pixel_count);
 	for (auto& plane : planes | drop(n_planes_out))
 		plane.clear();
-	//for (uint32_t plane = 0; plane < n_planes_out; ++plane)
-		//planes[plane].resize(pixel_count);
 
 	const int filler_bytes = -int(n_planes_in * width) & 3;
 	for (size_t i = 0; i < height; ++i)
@@ -149,16 +145,16 @@ void bmp_image<fp_t>::read(xpath filename, bool grayscale)
 	}
 	assert_throw(fin, "insufficient pixel data: {} pixels expected in {}", pixel_count, filename.wstring());
 
-	if (n_planes_in >= 3)
+	if (n_planes_out >= 3)
 		std::swap(planes[0], planes[2]); //bmp stores BGR values, not RGB
 	this->planes = std::move(planes);
-	this->n_planes_in = n_planes_in;
+	this->n_planes = n_planes_out;
 }
 
 template<class fp_t>
 void bmp_image<fp_t>::reset() noexcept
 {
-	this->n_planes_in = 0;
+	this->n_planes = 0;
 	for (auto& vec : this->planes)
 		vec.clear();
 }

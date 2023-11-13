@@ -536,11 +536,38 @@ auto create_preset_topology_nn()
 	return nn;
 }
 
+using cpath = const std::filesystem::path&;
+auto read_dataset(const bool grayscale, cpath class_positive, cpath class_negative)
+{
+	std::vector<data_pair> dataset;
+
+	bmp_image<fp> img;
+
+	auto traverse = [&]
+	(cpath p, const vector& output)
+	{
+		;
+		for (auto& entry : std::filesystem::directory_iterator(p))
+		{
+			img.read(entry.path(), grayscale);
+			dataset.emplace_back(std::move(img.planes[0]), output);
+		}
+	};
+
+	traverse(class_positive, { 1, 0 });
+	traverse(class_negative, { 0, 1 });
+
+	return dataset;
+}
+auto read_main_dataset()
+{
+	return read_dataset(true, "C:\\dataset\\training\\Positiv1000", "C:\\dataset\\training\\Negativ1000");
+}
 
 int main()
 {
-	bmp_image<fp> img;
-	img.read("C:\\dataset\\training\\Positiv1000\\person1_bacteria_1.bmp", true);
+	auto dataset = read_main_dataset();
+
 
 	auto nn = create_preset_topology_nn();
 	nn.write("a.txt");
