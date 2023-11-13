@@ -7,6 +7,7 @@ using namespace filesystem;
 using namespace ranges;
 using namespace views;
 
+
 using xpath = const path&;
 
 export template<class fp_t = float>
@@ -15,6 +16,7 @@ class bmp_image
 public:
 	std::array<std::vector<fp_t>, 4> planes;
 	unsigned n_planes;
+	unsigned width, height;
 
 	void read(xpath filename, bool grayscale = false);
 	void reset() noexcept;
@@ -22,16 +24,7 @@ public:
 
 
 
-#define assert_throw(cond, msg, ...) { if (!(cond)) throw std::format(L##msg, __VA_ARGS__); }
-
-#define try_read(data_ptr, size) \
-{ \
-	const auto pos = (streamoff)fin.tellg(); \
-	fin.read((char*)data_ptr, size); \
-	const auto read = fin.gcount(); \
-	assert_throw(read == size, "Failed to read {} bytes at {} of {}", size, pos, filename.wstring());\
-}
-#define try_read_obj(obj) try_read(&obj, sizeof(obj))
+#define assert_throw(cond, msg, ...) { if (!(cond)) throw std::format(L##msg __VA_OPT__(,) __VA_ARGS__); }
 
 template<class T>
 T iabs(T x)
@@ -44,8 +37,29 @@ T iabs(T x)
 template<class fp_t>
 void bmp_image<fp_t>::read(xpath filename, bool grayscale)
 {
-	ifstream fin(filename, std::ios::in | std::ios::binary);
-	assert_throw(fin.is_open(), "Failed to open file: {}", filename.wstring());
+	static thread_local std::vector<char> file_buffer;
+	size_t file_ptr = 0;
+
+	{
+		ifstream fin(filename, std::ios::in | std::ios::binary);
+		assert_throw(fin.is_open(), "Failed to open file: {}", filename.wstring());
+
+		fin.seekg(0, std::ios::end);
+		file_buffer.resize(fin.tellg());
+		fin.seekg(0, std::ios::beg);
+
+		fin.read(file_buffer.data(), file_buffer.size());
+
+		assert_throw(fin.gcount() == file_buffer.size(), "Failed to read data from {}", filename.wstring());
+	}
+
+	auto try_read_obj = [&]
+	(auto& obj)
+	{
+		memcpy(&obj, file_buffer.data() + file_ptr, sizeof(obj));
+		file_ptr += sizeof(obj);
+	};
+	auto read_byte = [&]{ return (uint8_t)file_buffer[file_ptr++]; };
 
 	uint32_t data_offset;
 
@@ -65,7 +79,6 @@ void bmp_image<fp_t>::read(xpath filename, bool grayscale)
 		data_offset = file_header.data_offset;
 	}
 
-	int32_t width, height;
 	uint32_t n_planes_in;
 	bool top_to_bottom;
 
@@ -88,6 +101,7 @@ void bmp_image<fp_t>::read(xpath filename, bool grayscale)
 		try_read_obj(info_header);
 
 		assert_throw(info_header.compression == 0, "Unsupported compression method {} in {}", info_header.compression, filename.wstring());
+		assert_throw(info_header.width >= 0, "Negative width in {}", filename.wstring());
 
 		width = info_header.width;
 		height = iabs(info_header.height);
@@ -105,8 +119,9 @@ void bmp_image<fp_t>::read(xpath filename, bool grayscale)
 	const size_t pixel_count = (size_t)width * height;
 	const unsigned n_planes_out = grayscale ? 1 : n_planes_in;
 	const unsigned n_color_planes = std::min(n_planes_in, 3u);
+	const fp_t grayscale_normalizer = (fp_t)1 / (n_color_planes * 255);
 
-	fin.seekg(data_offset, std::ios_base::beg);
+	file_ptr = data_offset;
 
 	auto planes = std::move(this->planes);
 	for (auto& plane : planes | take(n_planes_out))
@@ -127,23 +142,22 @@ void bmp_image<fp_t>::read(xpath filename, bool grayscale)
 			{
 				int val = 0;
 				for (uint32_t plane = 0; plane < n_color_planes; ++plane)
-					val += (uint8_t)fin.get();
-				planes[0][pixel] = val / ((fp_t)n_color_planes * 255);
+					val += read_byte();
+				planes[0][pixel] = val  * grayscale_normalizer;
 
 				for (uint32_t plane = n_color_planes; plane < n_planes_in; ++plane)
-					(void)fin.get();
+					(void)read_byte();
 			}
 			else
 			{
 				for (uint32_t plane = 0; plane < n_planes_out; ++plane)
-					planes[plane][pixel] = fin.get() / (fp_t)255;
+					planes[plane][pixel] = read_byte() / (fp_t)255;
 			}
 		}
 
 		for (int i = 0; i < filler_bytes; ++i)
-			(void)fin.get();
+			(void)read_byte();
 	}
-	assert_throw(fin, "insufficient pixel data: {} pixels expected in {}", pixel_count, filename.wstring());
 
 	if (n_planes_out >= 3)
 		std::swap(planes[0], planes[2]); //bmp stores BGR values, not RGB

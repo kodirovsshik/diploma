@@ -1,14 +1,18 @@
-
+﻿
 import std;
 import libksn.crc;
 import diploma.bmp;
 
+import <locale.h>;
 import <stdint.h>;
 import <math.h>;
-import <windows.h>;
+
+import <Windows.h>;
 
 #undef min
 #undef max
+
+namespace fs = std::filesystem;
 
 
 template<class F, class Tuple, class... Args, std::size_t... I>
@@ -429,7 +433,7 @@ public:
 	void create(std::span<const unsigned> layer_sizes)
 	{
 		const size_t n = layer_sizes.size();
-		xassert(n >= 2, "Degererate NN topology with {} layers", n + 1);
+		xassert(n >= 2, "Rejected NN topology with {} layers", n + 1);
 
 		this->reset();
 
@@ -528,25 +532,20 @@ struct data_pair
 
 
 
-auto create_preset_topology_nn()
-{
-	const auto layers = { 40u, 10000u, 2u };
-	nn_t nn;
-	nn.create(layers);
-	return nn;
-}
-
 using cpath = const std::filesystem::path&;
+
+
+
+template<class Img>
 auto read_dataset(const bool grayscale, cpath class_positive, cpath class_negative)
 {
 	std::vector<data_pair> dataset;
 
-	bmp_image<fp> img;
+	Img img;
 
 	auto traverse = [&]
 	(cpath p, const vector& output)
 	{
-		;
 		for (auto& entry : std::filesystem::directory_iterator(p))
 		{
 			img.read(entry.path(), grayscale);
@@ -561,37 +560,93 @@ auto read_dataset(const bool grayscale, cpath class_positive, cpath class_negati
 }
 auto read_main_dataset()
 {
-	return read_dataset(true, "C:\\dataset\\training\\Positiv1000", "C:\\dataset\\training\\Negativ1000");
+	return read_dataset<bmp_image<fp>>(true, "C:\\dataset\\training\\Positiv1000", "C:\\dataset\\training\\Negativ1000");
+}
+
+
+
+
+
+
+auto create_preset_topology_nn()
+{
+	const auto layers = { 40u, 10000u, 2u };
+	nn_t nn;
+	nn.create(layers);
+	return nn;
+}
+
+const auto clock = std::chrono::steady_clock::now;
+using duration_t = decltype(clock() - clock());
+
+template<class T>
+void doNotOptimizeOut(const volatile T& obj)
+{
+	static volatile char x = 0;
+	x = *(volatile char*)std::launder(std::addressof(obj));
+}
+
+std::mt19937_64 rng;
+
+int main1()
+{
+	auto t1 = clock();
+	auto dataset = read_main_dataset();
+	auto t2 = clock();
+
+	doNotOptimizeOut(dataset);
+
+	std::print("dt = {}\n", std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1));
+
+	return 0;
+}
+
+
+
+
+std::string wide_to_narrow(const std::wstring& w)
+{
+	const size_t mbsz = WideCharToMultiByte(CP_ACP, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+	std::string s(mbsz, ' ');
+	WideCharToMultiByte(CP_ACP, 0, w.data(), (int)w.size(), s.data(), (int)mbsz, nullptr, nullptr);
+	return s;
+}
+
+void setup_rng()
+{
+	const volatile int seed = 1;
+	rng.seed(std::hash<int>{}((int)seed));
+	rng.discard(4096);
+}
+
+void init()
+{
+	setlocale(0, "");
+	setup_rng();
 }
 
 int main()
 {
-	auto dataset = read_main_dataset();
-
-
-	auto nn = create_preset_topology_nn();
-	nn.write("a.txt");
-
-	vector x;
-
-
-	auto clock = std::chrono::steady_clock::now;
-	decltype(clock() - clock()) dt{};
-
-	const size_t n = 1000, k = 50;
-	for (size_t i = 0; i < n + k; ++i)
+	try
 	{
-		x.resize(65536);
-		auto t1 = clock();
-		nn.eval(x);
-		auto t2 = clock();
-
-		if (i > k)
-			dt += t2 - t1;
+		init();
+		return main1();
 	}
-
-	std::print("{}", std::chrono::duration_cast<std::chrono::microseconds>(dt / n));
-
-
-	std::ofstream() << x[1];
+	catch (const std::filesystem::filesystem_error& e)
+	{
+		std::print("EXCEPTION std::filesystem::filesystem_error\nwhat() = {}\npath1() = ", e.what(), e.path1().string());
+	}
+	catch (const std::exception& e)
+	{
+		std::print("EXCEPTION std::exception\nwhat() = {}", e.what());
+	}
+	catch (const std::wstring& str)
+	{
+		std::print("EXCEPTION std::wstring\nwhat() = {}", wide_to_narrow(str));
+	}
+	catch (...)
+	{
+		std::print("EXCEPTION (unknown type)");
+	}
+	return -1;
 }
