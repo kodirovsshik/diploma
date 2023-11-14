@@ -34,17 +34,43 @@ void doNotOptimizeOut(const volatile T& obj)
 
 std::mt19937_64 rng;
 
+
+template<class F>
+decltype(auto) timeit(F&& f, uint64_t& dt)
+{
+	if constexpr (std::is_void_v<std::remove_cv_t<std::invoke_result_t<F&&>>>)
+	{
+		const auto t1 = clock_f();
+		f();
+		const auto t2 = clock_f();
+
+		dt = (t2 - t1).count();
+		return;
+	}
+	else
+	{
+		const auto t1 = clock_f();
+		decltype(auto) result = f();
+		const auto t2 = clock_f();
+
+		dt = (t2 - t1).count();
+		doNotOptimizeOut(result);
+		return result;
+	}
+}
+
 int main1()
 {
-	xassert(false, "test");
+	thread_pool pool;
+	auto nn = create_preset_topology_nn();
 
-	auto t1 = clock_f();
-	auto dataset = read_main_dataset();
-	auto t2 = clock_f();
+	uint64_t dt1, dt2;
+	auto dataset = timeit([] { return read_main_dataset(); }, dt1);
+	fp eval = timeit([&] { return nn_eval_over_dataset(nn, dataset, pool); }, dt2);
 
-	doNotOptimizeOut(dataset);
-
-	std::print("dt = {}\n", std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1));
+	std::print("dt1 = {} ms\n", dt1 / 1000000);
+	std::print("dt2 = {} ms\n", dt2 / 1000000);
+	std::print("eval = {}\n", eval);
 
 	return 0;
 }

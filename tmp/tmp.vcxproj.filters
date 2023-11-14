@@ -34,7 +34,7 @@
       <Filter>Module FIles</Filter>
     </ClCompile>
     <ClCompile Include="nn.ixx">
-      <Filter>Source Files</Filter>
+      <Filter>Module FIles</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -214,21 +214,35 @@ public:
 	}
 };
 
-fp cross_entropy_loss(const fpvector& ex, const fpvector& obs)
+
+
+#define COST_DISTANCE_FUNCTION_DIFFSQ 1
+#define COST_DISTANCE_FUNCTION_CROSS_ENTROPY_LOSS 2
+
+#define COST_DISTANCE_FUNCTION COST_DISTANCE_FUNCTION_DIFFSQ
+
+
+#if COST_DISTANCE_FUNCTION == COST_DISTANCE_FUNCTION_DIFFSQ
+fp cost_distance(fp expected, fp observed)
 {
-	using std::log;
-	xassert(ex.size() == obs.size(), "Incompatible vectors: {} and {}", ex.size(), obs.size());
-	fp sum = 0;
-	for (size_t i = 0; i < ex.size(); ++i)
-	{
-#ifdef _DEBUG
-		fp _ = log(obs[i]);
-		xassert(_ == _, "Unexpected NAN detected");
-#endif
-		sum -= ex[i] * log(obs[i]);
-	}
-	return sum;
+	fp d = observed - expected;
+	return d * d;
 }
+fp cost_distance_dfdo(fp expected, fp observed)
+{
+	fp d = observed - expected;
+	return 2 * d;
+}
+#elif COST_DISTANCE_FUNCTION == COST_DISTANCE_FUNCTION_CROSS_ENTROPY_LOSS
+fp cost_distance(fp expected, fp observed)
+{
+	return -expected * log(observed);
+}
+fp cost_distance_dfdo(fp expected, fp observed)
+{
+	return -expected / observed;
+}
+#endif
 
 struct data_pair
 {
@@ -236,7 +250,7 @@ struct data_pair
 	fpvector output;
 };
 
-fp nn_eval_over_dataset(const std::vector<data_pair>& dataset, thread_pool& pool)
+export fp nn_eval_over_dataset(const nn_t& nn, const std::vector<data_pair>& dataset, thread_pool& pool)
 {
 	struct alignas(64) thread_state
 	{
@@ -246,7 +260,32 @@ fp nn_eval_over_dataset(const std::vector<data_pair>& dataset, thread_pool& pool
 
 	std::vector<thread_state> states(pool.size());
 
-	return 0;
+	auto worker = [&]
+	(const size_t i, const size_t thread_id)
+	{
+		auto& state = states[thread_id];
+		const auto& data = dataset[i];
+
+		fpvector eval_result = data.input;
+		nn.eval(eval_result);
+		xassert(eval_result.size() == data.output.size(), "Incompatible sized vectors");
+		for (size_t i = 0; i < eval_result.size(); ++i)
+			state.total_loss += cost_distance(data.output[i], eval_result[i]);
+		state.n++;
+	};
+
+	pool.schedule_sized_work(0, dataset.size(), worker);
+	pool.barrier();
+
+	fp sum = 0;
+	size_t div = 0;
+	for (const auto& x : states)
+	{
+		sum += x.total_loss;
+		div += x.n;
+	}
+
+	return sum / div;
 }
 
 
