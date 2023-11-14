@@ -1,14 +1,19 @@
+module;
+
+#include <filesystem>
+#include <array>
+#include <ranges>
+#include <vector>
+#include <fstream>
+
 export module diploma.bmp;
 
-import std;
 
-using namespace std;
-using namespace filesystem;
-using namespace ranges;
-using namespace views;
+namespace fs = std::filesystem;
+namespace vs = std::ranges::views;
 
+using cpath = const fs::path&;
 
-using xpath = const path&;
 
 export template<class fp_t = float>
 class bmp_image
@@ -18,7 +23,7 @@ public:
 	unsigned n_planes;
 	unsigned width, height;
 
-	void read(xpath filename, bool grayscale = false);
+	void read(cpath filename, bool grayscale = false);
 	void reset() noexcept;
 };
 
@@ -35,13 +40,13 @@ T iabs(T x)
 }
 
 template<class fp_t>
-void bmp_image<fp_t>::read(xpath filename, bool grayscale)
+void bmp_image<fp_t>::read(cpath filename, bool grayscale)
 {
 	static thread_local std::vector<char> file_buffer;
 	size_t file_ptr = 0;
 
 	{
-		ifstream fin(filename, std::ios::in | std::ios::binary);
+		std::ifstream fin(filename, std::ios::in | std::ios::binary);
 		assert_throw(fin.is_open(), "Failed to open file: {}", filename.wstring());
 
 		fin.seekg(0, std::ios::end);
@@ -124,9 +129,9 @@ void bmp_image<fp_t>::read(xpath filename, bool grayscale)
 	file_ptr = data_offset;
 
 	auto planes = std::move(this->planes);
-	for (auto& plane : planes | take(n_planes_out))
+	for (auto& plane : vs::take(planes, n_planes_out))
 		plane.resize(pixel_count);
-	for (auto& plane : planes | drop(n_planes_out))
+	for (auto& plane : vs::drop(planes, n_planes_out))
 		plane.clear();
 
 	const int filler_bytes = -int(n_planes_in * width) & 3;
