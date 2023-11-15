@@ -13,6 +13,7 @@ import diploma.nn;
 #include <chrono>
 #include <filesystem>
 #include <print>
+#include <fstream>
 
 #include <Windows.h>
 
@@ -63,6 +64,15 @@ decltype(auto) timeit(F&& f, uint64_t& dt)
 
 
 
+
+template<class T>
+bool save_val_to_file(const std::filesystem::path& p, T val)
+{
+	std::ofstream fout(p, std::ios::out | std::ios::binary);
+	fout.write((const char*)&val, sizeof(val));
+	return (bool)fout;
+}
+
 int main1()
 {
 	const std::filesystem::path base_dir = std::format("D:\\nn\\{}\\", rng_init_value);
@@ -72,20 +82,34 @@ int main1()
 
 	thread_pool pool(8);
 	nn_t nn_good = create_preset_topology_nn(), nn_pending, nn_new;
-	nn_good.randomize(rng);
 
-	const fp rate = 0.001f, decay = 1.05f;
-	size_t decay_n = 0;
-	size_t learn_n = 0;
+	if (std::filesystem::is_regular_file(base_dir / "a.nn"))
+		xassert(nn_good.read(base_dir / "a.nn"), "Failed to read a.nn");
+	else
+		nn_good.randomize(rng);
 
-	auto get_rate = [&] { return rate * powf(decay, -(fp)decay_n); };
+
 
 	auto dataset = timeit([] { return read_main_dataset(); }, dt);
 	std::print("dataset load dt = {} ms\n", dt / 1000000);
-	std::ranges::shuffle(dataset, rng);
+
+	const fp rate = 0.001f, decay = 1.05f;
+	size_t decay_n = 0;
+	auto get_rate = [&] { return rate * powf(decay, -(fp)decay_n); };
+
+	const size_t max_stochastic_batch = std::min<size_t>(-1, dataset.size());
+
+	std::mt19937_64 shuffle_rng(rng_init_value);
+	auto stochastic_shuffle = [&]
+	{
+		if (max_stochastic_batch == dataset.size())
+			return;
+		for (size_t i = 0; i < max_stochastic_batch; ++i)
+			std::swap(dataset[i], dataset[shuffle_rng() % (max_stochastic_batch - i) + i]);
+	};
 
 	bool reset_pending = true;
-	fp good_cost;
+	fp good_cost = nn_eval_cost(nn_good, dataset, pool);
 
 	while (true)
 	{
@@ -93,11 +117,13 @@ int main1()
 		{
 			reset_pending = false;
 			nn_pending = nn_good;
-			good_cost = nn_apply_gradient_descend_iteration(nn_pending, dataset, learn_n++, pool, get_rate());
+			stochastic_shuffle();
+			nn_apply_gradient_descend_iteration(nn_pending, dataset, max_stochastic_batch, pool, get_rate());
 		}
 
 		nn_new = nn_pending;
-		const fp pending_cost = nn_apply_gradient_descend_iteration(nn_new, dataset, learn_n++, pool, get_rate());
+		stochastic_shuffle();
+		const fp pending_cost = nn_apply_gradient_descend_iteration(nn_new, dataset, max_stochastic_batch, pool, get_rate());
 
 		if (pending_cost < good_cost)
 		{
@@ -106,6 +132,8 @@ int main1()
 			std::swap(nn_good, nn_pending);
 			std::swap(nn_new, nn_pending);
 			good_cost = pending_cost;
+
+			save_val_to_file(base_dir / "a.nn.decay_n", decay_n);
 
 			if (nn_good.write(base_dir / "a.nn"))
 				continue;

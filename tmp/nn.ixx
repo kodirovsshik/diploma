@@ -70,6 +70,15 @@ private:
 	static constexpr uint64_t signature = 0x52EEF7E17876A668;
 
 
+	void init_activators(size_t n)
+	{
+		activators.clear();
+		activators.reserve(n);
+		for (size_t i = 0; i < n - 1; ++i)
+			activators.push_back(leaky_relu);
+		activators.push_back(sigmoid);
+	}
+
 	void create1(std::span<const unsigned> layer_sizes)
 	{
 		const size_t n = layer_sizes.size();
@@ -79,11 +88,8 @@ private:
 
 		this->weights.resize(n);
 		this->biases.resize(n);
-		activators.reserve(n);
 
-		for (size_t i = 0; i < n - 1; ++i)
-			activators.push_back(leaky_relu);
-		activators.push_back(sigmoid);
+		init_activators(n);
 
 		for (size_t i = 0; i < n; ++i)
 			init_vector(this->biases[i], layer_sizes[i]);
@@ -143,8 +149,6 @@ public:
 		serializer(topology);
 		serializer.write_crc();
 
-		topology = decltype(topology)();
-
 		serializer(this->weights);
 		serializer(this->biases);
 		serializer.write_crc();
@@ -156,11 +160,33 @@ public:
 		std::ofstream fout(p, std::ios_base::out | std::ios_base::binary);
 		return this->write(fout);
 	}
-	void read(std::istream& in)
+#define rfassert(cond) { if (!(cond)) return false; }
+	bool read(std::istream& in)
 	{
-		decltype(signature) test_signature{};
-		//TODO
-		throw;
+		this->reset();
+
+		deserializer_t deserializer(in);
+		uint64_t test_signature{};
+
+		deserializer(test_signature);
+		rfassert(test_signature == signature);
+
+		std::vector<size_t> topology;
+		rfassert(deserializer(topology));
+		rfassert(deserializer.test_crc());
+
+		rfassert(deserializer(this->weights));
+		rfassert(deserializer(this->biases));
+
+		rfassert(deserializer.test_crc());
+
+		this->init_activators(topology.size());
+		return true;
+	}
+	bool read(const std::filesystem::path& p)
+	{
+		std::ifstream fin(p, std::ios::in | std::ios::binary);
+		return this->read(fin);
 	}
 
 	void reset()
@@ -377,7 +403,7 @@ auto nn_eval_cost_gradient(const nn_t& nn, const data_pair& pair)
 	return std::tuple<const decltype(dweights)&, const decltype(dbiases)&, fp>{ dweights, dbiases, cost };
 }
 
-export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair>& dataset, size_t iteration, thread_pool& pool, fp rate)
+export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair>& dataset, size_t observations, thread_pool& pool, fp rate)
 {
 	struct alignas(64) thread_state
 	{
@@ -389,10 +415,7 @@ export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair
 
 	static constexpr bool stochastic = true;
 
-	const size_t dataset_split_count = stochastic ? 10 : 1;
-	iteration %= dataset_split_count;
-	const size_t dataset_split_size = dataset.size() / dataset_split_count;
-	const size_t dataset_begin = dataset_split_count * iteration;
+	observations = std::min(observations, dataset.size());
 
 	dynarray<thread_state> states;
 
@@ -419,7 +442,7 @@ export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair
 	};
 
 	resize_to_match(states, pool);
-	pool.schedule_sized_work(dataset_begin, dataset_split_size, worker);
+	pool.schedule_sized_work(0, observations, worker);
 	pool.barrier();
 
 
