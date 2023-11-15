@@ -80,7 +80,7 @@ int main1()
 
 	uint64_t dt;
 
-	thread_pool pool(8);
+	thread_pool pool;
 	nn_t nn_good = create_preset_topology_nn(), nn_pending, nn_new;
 
 	if (std::filesystem::is_regular_file(base_dir / "a.nn"))
@@ -127,7 +127,7 @@ int main1()
 
 		if (pending_cost < good_cost)
 		{
-			std::print("cost -> {} (d = {})\n", pending_cost, good_cost - pending_cost);
+			std::print("cost -> {} ({}) (d = {})\n", pending_cost, nn_eval_cost(nn_pending, dataset, pool), good_cost - pending_cost);
 
 			std::swap(nn_good, nn_pending);
 			std::swap(nn_new, nn_pending);
