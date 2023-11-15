@@ -153,6 +153,7 @@
   <ItemGroup>
     <ClCompile Include="bmp.ixx" />
     <ClCompile Include="crc.ixx" />
+    <ClCompile Include="lin_alg.ixx" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="nn.ixx" />
     <ClCompile Include="serialization.ixx" />

@@ -8,6 +8,8 @@ module;
 
 export module diploma.bmp;
 
+import diploma.lin_alg;
+
 
 namespace fs = std::filesystem;
 namespace vs = std::ranges::views;
@@ -19,7 +21,7 @@ export template<class fp_t = float>
 class bmp_image
 {
 public:
-	std::array<std::vector<fp_t>, 4> planes;
+	std::array<dynarray<fp>, 4> planes;
 	unsigned n_planes;
 	unsigned width, height;
 

@@ -36,6 +36,9 @@
     <ClCompile Include="nn.ixx">
       <Filter>Module FIles</Filter>
     </ClCompile>
+    <ClCompile Include="lin_alg.ixx">
+      <Filter>Module FIles</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="defs.hpp">

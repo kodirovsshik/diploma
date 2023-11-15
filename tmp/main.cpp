@@ -25,15 +25,16 @@ import diploma.nn;
 const auto clock_f = std::chrono::steady_clock::now;
 using duration_t = decltype(clock_f() - clock_f());
 
+std::mt19937_64 rng;
+
+
+
 template<class T>
 void doNotOptimizeOut(const volatile T& obj)
 {
 	static volatile char x = 0;
 	x = *(volatile char*)std::launder(std::addressof(obj));
 }
-
-std::mt19937_64 rng;
-
 
 template<class F>
 decltype(auto) timeit(F&& f, uint64_t& dt)
@@ -59,18 +60,68 @@ decltype(auto) timeit(F&& f, uint64_t& dt)
 	}
 }
 
+
+
 int main1()
 {
+	uint64_t dt;
+
 	thread_pool pool;
-	auto nn = create_preset_topology_nn();
+	nn_t nn1 = create_preset_topology_nn(), nn2;
+	nn1.randomize(rng);
 
-	uint64_t dt1, dt2;
-	auto dataset = timeit([] { return read_main_dataset(); }, dt1);
-	fp eval = timeit([&] { return nn_eval_over_dataset(nn, dataset, pool); }, dt2);
+	const fp rate = 0.001f, decay = 0.1f;
+	size_t decay_n = 0;
+	size_t learn_n = 0;
 
-	std::print("dt1 = {} ms\n", dt1 / 1000000);
-	std::print("dt2 = {} ms\n", dt2 / 1000000);
-	std::print("eval = {}\n", eval);
+	auto get_rate = [&] { return rate / (1 + decay_n * decay); };
+
+	auto dataset = timeit([] { return read_main_dataset(); }, dt);
+	std::print("dataset load dt = {} ms\n", dt / 1000000);
+	std::ranges::shuffle(dataset, rng);
+
+	fp old_cost = nn_eval_cost(nn1, dataset, pool);
+	while (true)
+	{
+		nn2 = nn1;
+		nn_apply_gradient_descend_iteration(nn2, dataset, learn_n, pool, get_rate());
+
+		const fp new_cost = nn_eval_cost(nn2, dataset, pool);
+		std::print("cost: {} -> {} (dcost = {})", old_cost, new_cost, old_cost - new_cost);
+		if (new_cost > old_cost)
+		{
+			decay_n++;
+			std::print("... reverting, decreasing learning rate to {}\n", get_rate());
+		}
+		else
+		{
+			std::print("\n");
+
+			learn_n++;
+			nn1 = std::move(nn2);
+			old_cost = new_cost;;
+
+			if (nn1.write("D:\\a.nn"))
+				continue;
+
+			std::print("Failed to write to a.nn, trying again ...");
+			if (nn1.write("D:\\a.nn"))
+			{
+				std::print("ok\n");
+				continue;
+			}
+
+			std::print("Failed to write to a.nn, trying b.nn ...");
+			if (nn1.write("D:\\b.nn"))
+			{
+				std::print("ok\n");
+				continue;
+			}
+
+			std::print("failed to save, stopping now");
+			return 1;
+		}
+	}
 
 	return 0;
 }
