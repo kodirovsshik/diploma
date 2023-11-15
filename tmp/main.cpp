@@ -98,7 +98,7 @@ int main1()
 	nn_t nn_good = create_preset_topology_nn(), nn_pending, nn_new;
 
 	fp rate, decay;
-	size_t decay_n;
+	int64_t decay_n;
 	auto get_rate = [&] { return rate * powf(decay, -(fp)decay_n); };
 
 	auto serialize_state = [&]
@@ -140,7 +140,7 @@ int main1()
 		std::print("no existing model found\nAll NN parameters set to random\nAll learning parameters set to default values\n");
 		nn_good.randomize(rng);
 		rate = 0.001f;
-		decay = 1.05f;
+		decay = 1.1f;
 		decay_n = 0;
 	};
 
@@ -152,7 +152,7 @@ int main1()
 	std::print("size = {}, dt = {} ms\n", dataset.size(), dt / 1000000);
 
 
-#if 0 //stochastic
+#if 1 //stochastic
 	const size_t max_stochastic_batch = 1000;
 #else
 	const size_t max_stochastic_batch = dataset.size();
@@ -187,6 +187,9 @@ int main1()
 	std::print("Learning rate is {}\n", get_rate());
 	std::print("Press Ctrl-C to finish\nPress Ctrl-Break to cancel\n");
 
+	bool enter_settings = false;
+	bool continue_on_increased_cost = true;
+
 	size_t iteration = 0;
 	while (true)
 	{
@@ -195,6 +198,51 @@ int main1()
 			std::print("Unconditionally stopping by user request\n");
 			break;
 		}
+
+
+		const bool have_focus = GetForegroundWindow() == GetConsoleWindow();
+
+		if (enter_settings || have_focus && GetAsyncKeyState(VK_NUMPAD0) < 0)
+		{
+			enter_settings = false;
+			std::print(" Settings mode:\n");
+			std::print(" rate = {} (decay_n = {}) (q = up, a = down)\n", get_rate(), decay_n);
+			std::print(" continue_on_increased_cost = {} (w = change)\n", continue_on_increased_cost);
+			std::print(" ESC = exit\n");
+			std::print(" ~ = exit, enter settings after next iteration\n");
+
+			while (true)
+			{
+				bool exit = false;
+				switch (_getch())
+				{
+				case 'q':
+					--decay_n;
+					std::print(" Increasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
+					break;
+				case 'a':
+					++decay_n;
+					std::print(" Decreasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
+					break;
+
+				case 'w':
+					continue_on_increased_cost = !continue_on_increased_cost;
+					std::print(" continue_on_increased_cost changed to {}\n", continue_on_increased_cost);
+					break;
+
+				case '`':
+					enter_settings = true;
+				case 27:
+					exit = true;
+					break;
+				}
+
+				if (exit)
+					break;
+			};
+		}
+
+
 		std::print("Iteration {}: ", iteration++);
 
 		if (reset_pending)
@@ -207,7 +255,7 @@ int main1()
 		nn_new = nn_pending;
 		const fp pending_cost = gradient_descend(nn_new);
 
-		if (pending_cost < good_cost)
+		if (continue_on_increased_cost || pending_cost < good_cost)
 		{
 			std::print("cost -> {} (d = {})\n", pending_cost, good_cost - pending_cost);
 
