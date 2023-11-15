@@ -389,7 +389,7 @@ export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair
 
 	static constexpr bool stochastic = true;
 
-	const size_t dataset_split_count = stochastic ? 20 : 1;
+	const size_t dataset_split_count = stochastic ? 10 : 1;
 	iteration %= dataset_split_count;
 	const size_t dataset_split_size = dataset.size() / dataset_split_count;
 	const size_t dataset_begin = dataset_split_count * iteration;
