@@ -33,6 +33,8 @@ struct activation_function_data
 	using func_ptr = fp(*)(fp);
 
 	func_ptr f, df;
+
+	bool operator==(const activation_function_data&) const = default;
 };
 
 fp sigma(fp x)
@@ -79,12 +81,14 @@ private:
 		activators.push_back(sigmoid);
 	}
 
-	void create1(std::span<const unsigned> layer_sizes)
+	void create1(size_t inputs, std::span<const unsigned> layer_sizes)
 	{
 		const size_t n = layer_sizes.size();
 		xassert(n >= 2, "Rejected NN topology with {} layers", n + 1);
-
+		
 		this->reset();
+
+		this->input_neurons = inputs;
 
 		this->weights.resize(n);
 		this->biases.resize(n);
@@ -105,18 +109,20 @@ private:
 
 
 public:
-	static constexpr size_t input_neurons = 65536;
-
-
+	size_t input_neurons;
 
 	dynarray<matrix> weights;
 	dynarray<fpvector> biases;
 	dynarray<activation_function_data> activators;
 
-	void create(std::span<const unsigned> layer_sizes)
+
+
+	bool operator==(const nn_t& other) const noexcept = default;
+
+	void create(size_t inputs, std::span<const unsigned> layer_sizes)
 	{
 		nn_t nn;
-		nn.create1(layer_sizes);
+		nn.create1(inputs, layer_sizes);
 		std::swap(*this, nn);
 	}
 
@@ -139,12 +145,16 @@ public:
 	bool write(std::ostream& out)
 	{
 		serializer_t serializer(out);
+		return this->write(serializer);
+	}
+	bool write(serializer_t& serializer)
+	{
 		serializer(this->signature);
 
 		std::vector<size_t> topology(this->biases.size() + 1);
-		topology[0] = this->input_neurons;
 		for (size_t i = 0; i < this->biases.size(); ++i)
-			topology[i + 1] = this->biases[i].size();
+			topology[i] = this->biases[i].size();
+		topology.back() = this->input_neurons;
 
 		serializer(topology);
 		serializer.write_crc();
@@ -160,12 +170,15 @@ public:
 		std::ofstream fout(p, std::ios_base::out | std::ios_base::binary);
 		return this->write(fout);
 	}
-#define rfassert(cond) { if (!(cond)) return false; }
 	bool read(std::istream& in)
+	{
+		deserializer_t deserializer(in);
+		return this->read(deserializer);
+	}
+	bool read(deserializer_t& deserializer)
 	{
 		this->reset();
 
-		deserializer_t deserializer(in);
 		uint64_t test_signature{};
 
 		deserializer(test_signature);
@@ -174,6 +187,10 @@ public:
 		std::vector<size_t> topology;
 		rfassert(deserializer(topology));
 		rfassert(deserializer.test_crc());
+
+		rfassert(topology.size());
+		this->input_neurons = topology.back();
+		topology.pop_back();
 
 		rfassert(deserializer(this->weights));
 		rfassert(deserializer(this->biases));
@@ -191,6 +208,7 @@ public:
 
 	void reset()
 	{
+		this->input_neurons = 0;
 		this->weights = {};
 		this->biases = {};
 		this->activators = {};
@@ -251,6 +269,7 @@ struct data_pair
 {
 	fpvector input;
 	fpvector output;
+	size_t id;
 };
 
 export fp nn_eval_cost(const nn_t& nn, const std::vector<data_pair>& dataset, thread_pool& pool)
@@ -413,8 +432,6 @@ export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair
 		size_t n = 0;
 	};
 
-	static constexpr bool stochastic = true;
-
 	observations = std::min(observations, dataset.size());
 
 	dynarray<thread_state> states;
@@ -471,7 +488,6 @@ export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair
 	}
 
 	const fp scale = -rate / (result.n);
-	//const fp scale = -rate / (result.n * params_count);
 
 	for (size_t l = 0; l < result.dweights.size(); ++l)
 	{
@@ -514,7 +530,7 @@ auto read_dataset(const bool grayscale, cpath class_positive, cpath class_negati
 			for (auto& entry : std::filesystem::directory_iterator(p))
 			{
 				img.read(entry.path(), grayscale);
-				dataset.emplace_back(std::move(img.planes[0]), output);
+				dataset.emplace_back(std::move(img.planes[0]), output, dataset.size());
 			}
 		};
 
@@ -537,6 +553,6 @@ export auto create_preset_topology_nn()
 {
 	const auto layers = { 40u, 10000u, 2u };
 	nn_t nn;
-	nn.create(layers);
+	nn.create(65536, layers);
 	return nn;
 }

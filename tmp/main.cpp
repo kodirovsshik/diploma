@@ -64,98 +64,178 @@ decltype(auto) timeit(F&& f, uint64_t& dt)
 
 
 
-
-template<class T>
-bool save_val_to_file(const std::filesystem::path& p, T val)
+volatile bool stop_switch = false;
+volatile bool stop_on_save_switch = false;
+BOOL console_ctrl_handler(DWORD val)
 {
-	std::ofstream fout(p, std::ios::out | std::ios::binary);
-	fout.write((const char*)&val, sizeof(val));
-	return (bool)fout;
+	switch (val)
+	{
+	case CTRL_C_EVENT:
+		stop_on_save_switch = true;
+		return true;
+
+	case CTRL_BREAK_EVENT:
+		stop_switch = true;
+		return true;
+
+	default:
+		return false;
+	}
 }
+
+
 
 int main1()
 {
-	const std::filesystem::path base_dir = std::format("D:\\nn\\{}\\", rng_init_value);
+	const std::filesystem::path base_dir = std::format("D:\\nn\\{}\\", rng_init_value), nn_path = base_dir / "a.nn";
 	std::filesystem::create_directories(base_dir);
 
-	uint64_t dt;
 
+	uint64_t dt;
 	thread_pool pool;
+
+
 	nn_t nn_good = create_preset_topology_nn(), nn_pending, nn_new;
 
-	if (std::filesystem::is_regular_file(base_dir / "a.nn"))
-		xassert(nn_good.read(base_dir / "a.nn"), "Failed to read a.nn");
-	else
-		nn_good.randomize(rng);
-
-
-
-	auto dataset = timeit([] { return read_main_dataset(); }, dt);
-	std::print("dataset load dt = {} ms\n", dt / 1000000);
-
-	const fp rate = 0.001f, decay = 1.05f;
-	size_t decay_n = 0;
+	fp rate, decay;
+	size_t decay_n;
 	auto get_rate = [&] { return rate * powf(decay, -(fp)decay_n); };
 
-	const size_t max_stochastic_batch = std::min<size_t>(-1, dataset.size());
+	auto serialize_state = [&]
+	{
+		std::ofstream fout(nn_path, std::ios::out | std::ios::binary);
+		serializer_t out(fout);
 
-	std::mt19937_64 shuffle_rng(rng_init_value);
+		out(rate);
+		out(decay);
+		out(decay_n);
+		out.write_crc();
+		nn_good.write(out);
+
+		return (bool)out;
+	};
+	auto deserialize_state = [&] () -> bool
+	{
+		std::ifstream fin(nn_path, std::ios::in | std::ios::binary);
+		deserializer_t in(fin);
+
+		in(rate);
+		in(decay);
+		in(decay_n);
+		rfassert(in.test_crc());
+		nn_good.read(in);
+
+		return (bool)in;
+	};
+	auto deserialize_or_init = [&]
+	{
+		std::print("Session seed is {}\n", rng_init_value);
+		std::print("Trying to load existing model... ");
+		if (deserialize_state())
+		{
+			std::print("success\n");
+			return;
+		}
+
+		std::print("no existing model found\nAll NN parameters set to random\nAll learning parameters set to default values\n");
+		nn_good.randomize(rng);
+		rate = 0.001f;
+		decay = 1.05f;
+		decay_n = 0;
+	};
+
+	deserialize_or_init();
+
+
+	std::print("loading training dataset... ");
+	auto dataset = timeit([] { return read_main_dataset(); }, dt);
+	std::print("size = {}, dt = {} ms\n", dataset.size(), dt / 1000000);
+
+
+#if 0 //stochastic
+	const size_t max_stochastic_batch = 1000;
+#else
+	const size_t max_stochastic_batch = dataset.size();
+#endif
 	auto stochastic_shuffle = [&]
 	{
 		if (max_stochastic_batch == dataset.size())
 			return;
+
+		static std::mt19937_64 shuffle_rng(rng_init_value);
 		for (size_t i = 0; i < max_stochastic_batch; ++i)
-			std::swap(dataset[i], dataset[shuffle_rng() % (max_stochastic_batch - i) + i]);
+			std::swap(dataset[i], dataset[shuffle_rng() % (dataset.size() - i) + i]);
 	};
 
-	bool reset_pending = true;
-	fp good_cost = nn_eval_cost(nn_good, dataset, pool);
 
+	bool reset_pending = true;
+	std::print("evaluating initial cost... ");
+	fp good_cost = nn_eval_cost(nn_good, dataset, pool);
+	std::print("cost = {}\n", good_cost);
+
+
+	auto gradient_descend = [&]
+	(nn_t& nn)
+	{
+		stochastic_shuffle();
+		return nn_apply_gradient_descend_iteration(nn, dataset, max_stochastic_batch, pool, get_rate());
+	};
+
+
+	std::print("Training is running on {} threads\n", pool.size());
+	std::print("Using {} gradient descend\n", max_stochastic_batch == dataset.size() ?  "regular" : "stochastic");
+	std::print("Learning rate is {}\n", get_rate());
+	std::print("Press Ctrl-C to finish\nPress Ctrl-Break to cancel\n");
+
+	size_t iteration = 0;
 	while (true)
 	{
+		if (stop_switch)
+		{
+			std::print("Unconditionally stopping by user request\n");
+			break;
+		}
+		std::print("Iteration {}: ", iteration++);
+
 		if (reset_pending)
 		{
 			reset_pending = false;
 			nn_pending = nn_good;
-			stochastic_shuffle();
-			nn_apply_gradient_descend_iteration(nn_pending, dataset, max_stochastic_batch, pool, get_rate());
+			gradient_descend(nn_pending);
 		}
 
 		nn_new = nn_pending;
-		stochastic_shuffle();
-		const fp pending_cost = nn_apply_gradient_descend_iteration(nn_new, dataset, max_stochastic_batch, pool, get_rate());
+		const fp pending_cost = gradient_descend(nn_new);
 
 		if (pending_cost < good_cost)
 		{
-			std::print("cost -> {} ({}) (d = {})\n", pending_cost, nn_eval_cost(nn_pending, dataset, pool), good_cost - pending_cost);
+			std::print("cost -> {} (d = {})\n", pending_cost, good_cost - pending_cost);
 
 			std::swap(nn_good, nn_pending);
 			std::swap(nn_new, nn_pending);
 			good_cost = pending_cost;
 
-			save_val_to_file(base_dir / "a.nn.decay_n", decay_n);
+			bool save_ok = serialize_state();
 
-			if (nn_good.write(base_dir / "a.nn"))
-				continue;
-
-			std::print("Failed to write to a.nn, trying b.nn ...");
-			if (nn_good.write(base_dir / "b.nn"))
+			if (!save_ok)
 			{
-				std::print("ok\n");
-				continue;
+				std::print("Save failure, stopping by error");
+				return 1;
 			}
 
-			std::print("failed to save, stopping now");
-			return 1;
+			if (!stop_on_save_switch)
+				continue;
+
+			std::print("Save complete, stopping by user request\n");
+			break;
 		}
 		else
 		{
 			++decay_n;
-			std::print("decreasing learning rate to {}\n", get_rate());
+			std::print("cost -> {} (+{}), learning rate -> {}\n", pending_cost, pending_cost - good_cost, get_rate());
 			reset_pending = true;
 		}
 	}
-
 
 	return 0;
 }
@@ -179,6 +259,8 @@ void init()
 
 	rng.seed(std::hash<size_t>{}(rng_init_value));
 	rng.discard(4096);
+
+	SetConsoleCtrlHandler(console_ctrl_handler, true);
 }
 
 int main()

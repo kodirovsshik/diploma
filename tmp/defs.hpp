@@ -8,6 +8,8 @@
 #define lambda(input, val) [](input){ return (val); }
 #define lambdac(input, val) [=](input){ return (val); }
 
+#define rfassert(cond) { if (!(cond)) return false; }
+
 #define xassert(cond, fmt, ...) [&]{ auto sc = std::source_location::current(); \
 	if (!(cond)) \
 	{\

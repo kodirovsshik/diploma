@@ -227,7 +227,7 @@ export class deserializer_t
 public:
 	deserializer_t(std::istream& is) : in(is) {}
 
-	template<class T>
+	template<class T> requires(!std::is_const_v<T>)
 	bool operator()(T& x)
 	{
 		return serialize_helper<T>{}(in, x, crc_);
