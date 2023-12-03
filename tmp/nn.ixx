@@ -9,6 +9,7 @@ module;
 #include <fstream>
 #include <ranges>
 #include <random>
+#include <numeric>
 
 #include "defs.hpp"
 
@@ -272,12 +273,43 @@ struct data_pair
 	size_t id;
 };
 
-export fp nn_eval_cost(const nn_t& nn, const std::vector<data_pair>& dataset, thread_pool& pool)
+export constexpr size_t positive_idx = 0;
+export constexpr size_t negative_idx = 1;
+export constexpr size_t true_idx = 0;
+export constexpr size_t false_idx = 1;
+//implies ordering TP, FP, TN, FN
+
+export struct classification_statistics
+{
+	uint32_t vals[2][2]{};
+	uint32_t& get(size_t is_negative, size_t is_false) { return vals[is_negative][is_false]; }
+
+	auto total() const
+	{
+		return std::accumulate(&vals[0][0], &vals[0][0] + 4, uint32_t());
+	}
+	float accuracy() const
+	{
+		const auto correct = this->vals[positive_idx][true_idx] + this->vals[negative_idx][true_idx];
+		return (float)correct / this->total();
+	}
+	float fp_rate() const
+	{
+		return (float)this->vals[positive_idx][false_idx] / this->total();
+	}
+	float fn_rate() const
+	{
+		return (float)this->vals[negative_idx][false_idx] / this->total();
+	}
+};
+
+export std::pair<fp, classification_statistics> nn_eval_cost(const nn_t& nn, const std::vector<data_pair>& dataset, thread_pool& pool)
 {
 	struct alignas(64) thread_state
 	{
 		size_t n = 0;
 		fp total_loss = 0;
+		classification_statistics stats;
 	};
 
 	std::vector<thread_state> states(pool.size());
@@ -294,6 +326,10 @@ export fp nn_eval_cost(const nn_t& nn, const std::vector<data_pair>& dataset, th
 		for (size_t i = 0; i < eval_result.size(); ++i)
 			state.total_loss += cost_distance(data.output[i], eval_result[i]);
 		state.n++;
+
+		const bool predicted_positive = eval_result[0] > eval_result[1];
+		const bool actually_positive = data.output[0] > data.output[1];
+		++state.stats.get(!predicted_positive, predicted_positive != actually_positive);
 	};
 
 	pool.schedule_sized_work(0, dataset.size(), worker);
@@ -301,13 +337,16 @@ export fp nn_eval_cost(const nn_t& nn, const std::vector<data_pair>& dataset, th
 
 	fp sum = 0;
 	size_t div = 0;
+	classification_statistics stats;
 	for (const auto& x : states)
 	{
 		sum += x.total_loss;
 		div += x.n;
+		for (size_t i = 0; i < 4; ++i)
+			stats.vals[i / 2][i % 2] += x.stats.vals[i / 2][i % 2];
 	}
 
-	return sum / div;
+	return { sum / div, stats };
 }
 
 
@@ -419,17 +458,23 @@ auto nn_eval_cost_gradient(const nn_t& nn, const data_pair& pair)
 	for (size_t i = 0; i < expected.size(); ++i)
 		cost += cost_distance(expected[i], activations.back()[i]);
 
-	return std::tuple<const decltype(dweights)&, const decltype(dbiases)&, fp>{ dweights, dbiases, cost };
+	classification_statistics stats;
+	const bool predicted_positive = activations.back()[0] > activations.back()[1];
+	const bool actually_positive = expected[0] > expected[1];
+	++stats.get(!predicted_positive, predicted_positive != actually_positive);
+
+	return std::tuple<const decltype(dweights)&, const decltype(dbiases)&, fp, classification_statistics>{ dweights, dbiases, cost, stats };
 }
 
-export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair>& dataset, size_t observations, thread_pool& pool, fp rate)
+export auto nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair>& dataset, size_t observations, thread_pool& pool, fp rate)
 {
 	struct alignas(64) thread_state
 	{
 		dynarray<matrix> dweights;
 		dynarray<fpvector> dbiases;
-		fp cost = 0;
+		classification_statistics stats;
 		size_t n = 0;
+		fp cost = 0;
 	};
 
 	observations = std::min(observations, dataset.size());
@@ -440,7 +485,7 @@ export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair
 	(size_t i, size_t thread_id)
 	{
 		auto& state = states[thread_id];
-		const auto& [dweights, dbiases, cost] = nn_eval_cost_gradient(nn, dataset[i]);
+		const auto& [dweights, dbiases, cost, stats] = nn_eval_cost_gradient(nn, dataset[i]);
 
 		if (state.dweights.size() == 0)
 		{
@@ -456,6 +501,8 @@ export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair
 		}
 		state.cost += cost;
 		state.n++;
+		for (size_t i = 0; i < 4; ++i)
+			state.stats.vals[i / 2][i % 2] += stats.vals[i / 2][i % 2];
 	};
 
 	resize_to_match(states, pool);
@@ -469,6 +516,8 @@ export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair
 	{
 		result.cost += states[i].cost;
 		result.n += states[i].n;
+		for (size_t i = 0; i < 4; ++i)
+			result.stats.vals[i / 2][i % 2] += states[i].stats.vals[i / 2][i % 2];
 
 		for (size_t j = 0; j < result.dweights.size(); ++j)
 			add_mat_mat(states[i].dweights[j], result.dweights[j]);
@@ -508,7 +557,7 @@ export fp nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pair
 	for (size_t l = 0; l < result.dbiases.size(); ++l)
 		add_vec_vec(result.dbiases[l], nn.biases[l]);
 
-	return result.cost;
+	return std::pair{ result.cost, result.stats };
 }
 
 
@@ -539,10 +588,15 @@ auto read_dataset(const bool grayscale, cpath class_positive, cpath class_negati
 
 	return dataset;
 }
-export auto read_main_dataset()
+export auto read_training_dataset()
 {
 	using T = bmp_image<fp>;
 	return read_dataset<T>(true, "C:\\dataset\\training\\Positiv1000", "C:\\dataset\\training\\Negativ1000");
+}
+export auto read_validation_dataset()
+{
+	using T = bmp_image<fp>;
+	return read_dataset<T>(true, "C:\\dataset\\validate\\positiv_train200", "C:\\dataset\\validate\\negativ_train200");
 }
 
 

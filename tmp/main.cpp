@@ -148,11 +148,16 @@ int main1()
 
 
 	std::print("loading training dataset... ");
-	auto dataset = timeit([] { return read_main_dataset(); }, dt);
+	auto dataset = timeit([] { return read_training_dataset(); }, dt);
 	std::print("size = {}, dt = {} ms\n", dataset.size(), dt / 1000000);
 
+	std::print("loading validation dataset... ");
+	const auto validation_dataset = timeit([] { return read_validation_dataset(); }, dt);
+	std::print("size = {}, dt = {} ms\n", validation_dataset.size(), dt / 1000000);
 
-#if 1 //stochastic
+
+
+#if 0 //stochastic
 	const size_t max_stochastic_batch = 1000;
 #else
 	const size_t max_stochastic_batch = dataset.size();
@@ -170,8 +175,12 @@ int main1()
 
 	bool reset_pending = true;
 	std::print("evaluating initial cost... ");
-	fp good_cost = nn_eval_cost(nn_good, dataset, pool);
-	std::print("cost = {}\n", good_cost);
+	auto good_cost = nn_eval_cost(nn_good, dataset, pool).first;
+	{
+		const auto good_stats = nn_eval_cost(nn_good, validation_dataset, pool).second;
+		std::print("cost = {}, AC = {:.3g}, FPR = {:.3g}, FNR = {:.3g}\n",
+			good_cost, good_stats.accuracy(), good_stats.fp_rate(), good_stats.fn_rate());
+	}
 
 
 	auto gradient_descend = [&]
@@ -187,7 +196,7 @@ int main1()
 	std::print("Learning rate is {}\n", get_rate());
 	std::print("Press Ctrl-C to finish\nPress Ctrl-Break to cancel\n");
 
-	bool enter_settings = false;
+	bool enter_settings = true;
 	bool continue_on_increased_cost = true;
 
 	size_t iteration = 0;
@@ -208,8 +217,8 @@ int main1()
 			std::print(" Settings mode:\n");
 			std::print(" rate = {} (decay_n = {}) (q = up, a = down)\n", get_rate(), decay_n);
 			std::print(" continue_on_increased_cost = {} (w = change)\n", continue_on_increased_cost);
-			std::print(" ESC = exit\n");
-			std::print(" ~ = exit, enter settings after next iteration\n");
+			std::print(" ESC = continue\n");
+			std::print(" ~ = continue for one iteration\n");
 
 			while (true)
 			{
@@ -253,11 +262,13 @@ int main1()
 		}
 
 		nn_new = nn_pending;
-		const fp pending_cost = gradient_descend(nn_new);
+		const fp pending_cost = timeit([&] { return gradient_descend(nn_new); }, dt).first;
 
 		if (continue_on_increased_cost || pending_cost < good_cost)
 		{
-			std::print("cost -> {} (d = {})\n", pending_cost, good_cost - pending_cost);
+			const auto pending_stats = nn_eval_cost(nn_pending, validation_dataset, pool).second;
+			std::print("{} ms, cost -> {} (d = {}), AC = {}, FPR = {}, FNR = {}\n", 
+				dt / 1000000, pending_cost, good_cost - pending_cost, pending_stats.accuracy(), pending_stats.fp_rate(), pending_stats.fn_rate());
 
 			std::swap(nn_good, nn_pending);
 			std::swap(nn_new, nn_pending);
