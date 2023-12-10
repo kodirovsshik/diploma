@@ -166,7 +166,7 @@ public:
 
 		return (bool)serializer;
 	}
-	bool write(const std::filesystem::path& p)
+	bool write(cpath p)
 	{
 		std::ofstream fout(p, std::ios_base::out | std::ios_base::binary);
 		return this->write(fout);
@@ -201,7 +201,7 @@ public:
 		this->init_activators(topology.size());
 		return true;
 	}
-	bool read(const std::filesystem::path& p)
+	bool read(cpath p)
 	{
 		std::ifstream fin(p, std::ios::in | std::ios::binary);
 		return this->read(fin);
@@ -217,7 +217,7 @@ public:
 
 	static fpvector& get_thread_local_helper_vector()
 	{
-		static thread_local fpvector v;
+		nofree fpvector v;
 		return v;
 	}
 
@@ -388,13 +388,13 @@ auto nn_eval_cost_gradient(const nn_t& nn, const data_pair& pair)
 
 	xassert(expected.size() == layer_size(layers_count - 1), "Wrong expected output size");
 
-	static thread_local dynarray<matrix> dweights;
-	static thread_local dynarray<fpvector> dbiases;
+	nofree dynarray<matrix> dweights;
+	nofree dynarray<fpvector> dbiases;
 
-	static thread_local dynarray<fpvector> sums;
-	static thread_local dynarray<fpvector> activations;
+	nofree dynarray<fpvector> sums;
+	nofree dynarray<fpvector> activations;
 
-	static thread_local fpvector dactivations, new_dactivations;
+	nofree fpvector dactivations, new_dactivations;
 
 	resize_to_match(dweights, nn.weights);
 	resize_to_match(dbiases, nn.biases);
@@ -564,8 +564,6 @@ export auto nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pa
 
 
 
-using cpath = const std::filesystem::path&;
-
 template<class Img>
 auto read_dataset(const bool grayscale, cpath class_positive, cpath class_negative)
 {
@@ -593,7 +591,7 @@ export auto read_training_dataset()
 	using T = bmp_image<fp>;
 	return read_dataset<T>(true, "C:\\dataset\\training\\Positiv1000", "C:\\dataset\\training\\Negativ1000");
 }
-export auto read_validation_dataset()
+export auto read_test_dataset()
 {
 	using T = bmp_image<fp>;
 	return read_dataset<T>(true, "C:\\dataset\\validate\\positiv_train200", "C:\\dataset\\validate\\negativ_train200");

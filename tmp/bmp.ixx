@@ -6,6 +6,8 @@ module;
 #include <vector>
 #include <fstream>
 
+#include "defs.hpp"
+
 export module diploma.bmp;
 
 import diploma.lin_alg;
@@ -44,7 +46,7 @@ T iabs(T x)
 template<class fp_t>
 void bmp_image<fp_t>::read(cpath filename, bool grayscale)
 {
-	static thread_local std::vector<char> file_buffer;
+	nofree std::vector<char> file_buffer;
 	size_t file_ptr = 0;
 
 	{
