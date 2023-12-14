@@ -238,13 +238,6 @@ public:
 
 
 
-#define COST_DISTANCE_FUNCTION_DIFFSQ 1
-#define COST_DISTANCE_FUNCTION_CROSS_ENTROPY_LOSS 2
-
-#define COST_DISTANCE_FUNCTION COST_DISTANCE_FUNCTION_DIFFSQ
-
-
-#if COST_DISTANCE_FUNCTION == COST_DISTANCE_FUNCTION_DIFFSQ
 fp cost_distance(fp expected, fp observed)
 {
 	fp d = observed - expected;
@@ -255,16 +248,6 @@ fp cost_distance_dfdo(fp expected, fp observed)
 	fp d = observed - expected;
 	return 2 * d;
 }
-#elif COST_DISTANCE_FUNCTION == COST_DISTANCE_FUNCTION_CROSS_ENTROPY_LOSS
-fp cost_distance(fp expected, fp observed)
-{
-	return -expected * log(observed);
-}
-fp cost_distance_dfdo(fp expected, fp observed)
-{
-	return -expected / observed;
-}
-#endif
 
 struct data_pair
 {
@@ -300,6 +283,14 @@ export struct classification_statistics
 	float fn_rate() const
 	{
 		return (float)this->vals[negative_idx][false_idx] / this->total();
+	}
+	float tp_rate() const
+	{
+		return (float)this->vals[positive_idx][true_idx] / this->total();
+	}
+	float tn_rate() const
+	{
+		return (float)this->vals[negative_idx][true_idx] / this->total();
 	}
 };
 

@@ -152,8 +152,8 @@ int main1()
 	std::print("size = {}, dt = {} ms\n", dataset.size(), dt / 1000000);
 
 	std::print("loading test dataset... ");
-	const auto test_dataset = timeit([] { return read_test_dataset(); }, dt);
-	std::print("size = {}, dt = {} ms\n", test_dataset.size(), dt / 1000000);
+	const auto validation_dataset = timeit([] { return read_test_dataset(); }, dt);
+	std::print("size = {}, dt = {} ms\n", validation_dataset.size(), dt / 1000000);
 
 
 
@@ -178,8 +178,8 @@ int main1()
 	auto good_cost = nn_eval_cost(nn_good, dataset, pool).first;
 	{
 		const auto good_stats = nn_eval_cost(nn_good, validation_dataset, pool).second;
-		std::print("cost = {}, AC = {:.3g}, FPR = {:.3g}, FNR = {:.3g}\n",
-			good_cost, good_stats.accuracy(), good_stats.fp_rate(), good_stats.fn_rate());
+		std::print("cost = {}, AC = {:.3g}\nTPR = {:.3g}, TNR = {:.3g}, FPR = {:.3g}, FNR = {:.3g}\n",
+			good_cost, good_stats.accuracy(), good_stats.tp_rate(), good_stats.tn_rate(), good_stats.fp_rate(), good_stats.fn_rate());
 	}
 
 
@@ -266,7 +266,7 @@ int main1()
 
 		if (continue_on_increased_cost || pending_cost < good_cost)
 		{
-			const auto pending_stats = nn_eval_cost(nn_pending, test_dataset, pool).second;
+			const auto pending_stats = nn_eval_cost(nn_pending, validation_dataset, pool).second;
 			std::print("{} ms, cost -> {} (d = {}), AC = {}, FPR = {}, FNR = {}\n", 
 				dt / 1000000, pending_cost, good_cost - pending_cost, pending_stats.accuracy(), pending_stats.fp_rate(), pending_stats.fn_rate());
 
