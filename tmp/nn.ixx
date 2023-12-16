@@ -143,12 +143,12 @@ public:
 	}
 
 
-	bool write(std::ostream& out)
+	bool write(std::ostream& out) const
 	{
 		serializer_t serializer(out);
 		return this->write(serializer);
 	}
-	bool write(serializer_t& serializer)
+	bool write(serializer_t& serializer) const
 	{
 		serializer(this->signature);
 
@@ -166,7 +166,7 @@ public:
 
 		return (bool)serializer;
 	}
-	bool write(cpath p)
+	bool write(cpath p) const
 	{
 		std::ofstream fout(p, std::ios_base::out | std::ios_base::binary);
 		return this->write(fout);
@@ -276,19 +276,19 @@ export struct classification_statistics
 		const auto correct = this->vals[positive_idx][true_idx] + this->vals[negative_idx][true_idx];
 		return (float)correct / this->total();
 	}
-	float fp_rate() const
+	float fp_frac() const
 	{
 		return (float)this->vals[positive_idx][false_idx] / this->total();
 	}
-	float fn_rate() const
+	float fn_frac() const
 	{
 		return (float)this->vals[negative_idx][false_idx] / this->total();
 	}
-	float tp_rate() const
+	float tp_frac() const
 	{
 		return (float)this->vals[positive_idx][true_idx] / this->total();
 	}
-	float tn_rate() const
+	float tn_frac() const
 	{
 		return (float)this->vals[negative_idx][true_idx] / this->total();
 	}

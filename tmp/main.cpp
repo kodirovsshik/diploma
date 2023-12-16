@@ -14,6 +14,7 @@ import diploma.nn;
 #include <filesystem>
 #include <print>
 #include <fstream>
+#include <stacktrace>
 
 #include <Windows.h>
 
@@ -85,21 +86,87 @@ BOOL console_ctrl_handler(DWORD val)
 
 
 
+std::string wide_to_narrow(const std::wstring& w)
+{
+	const size_t mbsz =
+		WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+	std::string s(mbsz, ' ');
+	WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), (int)mbsz, nullptr, nullptr);
+	return s;
+}
+
+
+#define wprint(fmt, ...) { fputws(std::format(fmt __VA_OPT__(,) __VA_ARGS__).data(), stdout); }
+
+int __tlregdtor()
+{
+	//MSVC bug workaround
+	return 0;
+}
+
+int online_classification(const nn_t& nn)
+{
+	static wchar_t buffer[512];
+
+	OPENFILENAMEW info{};
+	info.lStructSize = sizeof(info);
+	info.hwndOwner = GetConsoleWindow();
+	info.lpstrFilter = L"Compatible BMP Images (.bmp)\0*.bmp\0\0";
+	info.lpstrFile = buffer;
+	info.nMaxFile = sizeof(buffer) / sizeof(buffer[0]);
+	info.lpstrTitle = L"Select an image for classification";
+	info.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+	while (true)
+	{
+		buffer[0] = 0;
+		const auto ok = (bool)GetOpenFileNameW(&info);
+		if (!ok && CommDlgExtendedError() == 0)
+			return 0;
+
+		bmp_image img;
+		try
+		{
+			img.reset();
+			img.read(buffer, true);
+			if (img.width != 256 || img.height != 256)
+				throw std::wstring(L"Invalid image size");
+
+			auto& data = img.planes[0];
+			nn.eval(data);
+			auto sum = data[0] + data[1];
+			std::print("Data: {}, {} (status: {})\n",
+				data[0] / sum, data[1] / sum,
+				data[0] > data[1] ? "positive" : "negative"
+			);
+		}
+		catch (const std::wstring& err)
+		{
+			wprint(L"{} error: \"{}\": {}\nPress any key to continue\n", 
+				img.n_planes == 0 ? L"File read" : L"Classification", buffer, err
+			);
+		}
+		while (_getch() != ' ');
+	}
+}
+
 int main1()
 {
-	const std::filesystem::path base_dir = std::format("D:\\nn\\{}\\", rng_init_value), nn_path = base_dir / "a.nn";
+	cpath base_dir = std::format("D:\\nn\\{}\\", rng_init_value),
+		nn_path = base_dir / "a.nn";
+
 	std::filesystem::create_directories(base_dir);
 
 
 	uint64_t dt;
-	thread_pool pool;
 
 
 	nn_t nn_good = create_preset_topology_nn(), nn_pending, nn_new;
-
+	
 	fp rate, decay;
 	int64_t decay_n;
 	auto get_rate = [&] { return rate * powf(decay, -(fp)decay_n); };
+
 
 	auto serialize_state = [&]
 	{
@@ -137,7 +204,7 @@ int main1()
 			return;
 		}
 
-		std::print("no existing model found\nAll NN parameters set to random\nAll learning parameters set to default values\n");
+		std::print("no existing model found\nAll NN parameters set to random\nAll hyperparameters set to default values\n");
 		nn_good.randomize(rng);
 		rate = 0.001f;
 		decay = 1.1f;
@@ -147,11 +214,24 @@ int main1()
 	deserialize_or_init();
 
 
+	std::print("Enter online classification mode? (y/n):\n");
+	while (true)
+	{
+		const char c = _getch();
+		if (c == 'y' || c == 'Y')
+			return online_classification(nn_good);
+		if (c == 'n' || c == 'N')
+			break;
+	}
+
+
+	thread_pool pool;
+
 	std::print("loading training dataset... ");
 	auto dataset = timeit([] { return read_training_dataset(); }, dt);
 	std::print("size = {}, dt = {} ms\n", dataset.size(), dt / 1000000);
 
-	std::print("loading test dataset... ");
+	std::print("loading validation dataset... ");
 	const auto validation_dataset = timeit([] { return read_test_dataset(); }, dt);
 	std::print("size = {}, dt = {} ms\n", validation_dataset.size(), dt / 1000000);
 
@@ -178,8 +258,11 @@ int main1()
 	auto good_cost = nn_eval_cost(nn_good, dataset, pool).first;
 	{
 		const auto good_stats = nn_eval_cost(nn_good, validation_dataset, pool).second;
-		std::print("cost = {}, AC = {:.3g}\nTPR = {:.3g}, TNR = {:.3g}, FPR = {:.3g}, FNR = {:.3g}\n",
-			good_cost, good_stats.accuracy(), good_stats.tp_rate(), good_stats.tn_rate(), good_stats.fp_rate(), good_stats.fn_rate());
+		std::print("cost = {}\nAC = {:.3g}%, TP ~ {:.3g}%, TN ~ {:.3g}%, FP ~ {:.3g}%, FN ~ {:.3g}%\n",
+			good_cost, good_stats.accuracy() * 100,
+			good_stats.tp_frac() * 100, good_stats.tn_frac() * 100,
+			good_stats.fp_frac() * 100, good_stats.fn_frac() * 100
+		);
 	}
 
 
@@ -199,6 +282,46 @@ int main1()
 	bool enter_settings = true;
 	bool continue_on_increased_cost = true;
 
+	auto settings_menu = [&]
+	{
+		enter_settings = false;
+		std::print(" Settings mode:\n");
+		std::print(" rate = {} (decay_n = {}) (q = up, a = down)\n", get_rate(), decay_n);
+		std::print(" continue_on_increased_cost = {} (w = change)\n", continue_on_increased_cost);
+		std::print(" ESC = continue\n");
+		std::print(" ~ = continue for one iteration\n");
+
+		while (true)
+		{
+			bool exit = false;
+			switch (_getch())
+			{
+			case 'q':
+				--decay_n;
+				std::print(" Increasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
+				break;
+			case 'a':
+				++decay_n;
+				std::print(" Decreasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
+				break;
+
+			case 'w':
+				continue_on_increased_cost = !continue_on_increased_cost;
+				std::print(" continue_on_increased_cost changed to {}\n", continue_on_increased_cost);
+				break;
+
+			case '`':
+				enter_settings = true;
+			case 27:
+				exit = true;
+				break;
+			}
+
+			if (exit)
+				break;
+		};
+	};
+
 	size_t iteration = 0;
 	while (true)
 	{
@@ -212,45 +335,7 @@ int main1()
 		const bool have_focus = GetForegroundWindow() == GetConsoleWindow();
 
 		if (enter_settings || have_focus && GetAsyncKeyState(VK_NUMPAD0) < 0)
-		{
-			enter_settings = false;
-			std::print(" Settings mode:\n");
-			std::print(" rate = {} (decay_n = {}) (q = up, a = down)\n", get_rate(), decay_n);
-			std::print(" continue_on_increased_cost = {} (w = change)\n", continue_on_increased_cost);
-			std::print(" ESC = continue\n");
-			std::print(" ~ = continue for one iteration\n");
-
-			while (true)
-			{
-				bool exit = false;
-				switch (_getch())
-				{
-				case 'q':
-					--decay_n;
-					std::print(" Increasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
-					break;
-				case 'a':
-					++decay_n;
-					std::print(" Decreasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
-					break;
-
-				case 'w':
-					continue_on_increased_cost = !continue_on_increased_cost;
-					std::print(" continue_on_increased_cost changed to {}\n", continue_on_increased_cost);
-					break;
-
-				case '`':
-					enter_settings = true;
-				case 27:
-					exit = true;
-					break;
-				}
-
-				if (exit)
-					break;
-			};
-		}
-
+			settings_menu();
 
 		std::print("Iteration {}: ", iteration++);
 
@@ -267,8 +352,8 @@ int main1()
 		if (continue_on_increased_cost || pending_cost < good_cost)
 		{
 			const auto pending_stats = nn_eval_cost(nn_pending, validation_dataset, pool).second;
-			std::print("{} ms, cost -> {} (d = {}), AC = {}, FPR = {}, FNR = {}\n", 
-				dt / 1000000, pending_cost, good_cost - pending_cost, pending_stats.accuracy(), pending_stats.fp_rate(), pending_stats.fn_rate());
+			std::print("{} ms, cost -> {} (d = {}), AC = {}%, FP ~ {}%, FN ~ {}%\n", 
+				dt / 1000000, pending_cost, good_cost - pending_cost, pending_stats.accuracy() * 100, pending_stats.fp_frac() * 100, pending_stats.fn_frac() * 100);
 
 			std::swap(nn_good, nn_pending);
 			std::swap(nn_new, nn_pending);
@@ -303,23 +388,19 @@ int main1()
 
 
 
-std::string wide_to_narrow(const std::wstring& w)
-{
-	const size_t mbsz = WideCharToMultiByte(CP_ACP, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-	std::string s(mbsz, ' ');
-	WideCharToMultiByte(CP_ACP, 0, w.data(), (int)w.size(), s.data(), (int)mbsz, nullptr, nullptr);
-	return s;
-}
-
-
 void init()
 {
-	setlocale(0, "");
+	auto loc = setlocale(0, "");
 
 	rng.seed(std::hash<size_t>{}(rng_init_value));
 	rng.discard(4096);
 
 	SetConsoleCtrlHandler(console_ctrl_handler, true);
+}
+
+void print_stacktrace()
+{
+	std::print("STACK TRACE:\n{}\n", std::stacktrace::current());
 }
 
 int main()
@@ -331,19 +412,25 @@ int main()
 	}
 	catch (const std::filesystem::filesystem_error& e)
 	{
-		std::print("EXCEPTION std::filesystem::filesystem_error\nwhat() = {}\npath1() = ", e.what(), e.path1().string());
+		std::print("EXCEPTION std::filesystem::filesystem_error\nwhat() = {}\n", e.what());
+		wprint(L"path1() = {}\npath2 = {}\n", e.path1().wstring(), e.path2().wstring());
+		print_stacktrace();
 	}
 	catch (const std::exception& e)
 	{
-		std::print("EXCEPTION std::exception\nwhat() = {}", e.what());
+		std::print("EXCEPTION std::exception\nwhat() = {}\n", e.what());
+		print_stacktrace();
 	}
 	catch (const std::wstring& str)
 	{
-		std::print("EXCEPTION std::wstring\nwhat() = {}", wide_to_narrow(str));
+		wprint(L"EXCEPTION std::wstring\nwhat() = {}\n", str);
+		print_stacktrace();
 	}
 	catch (...)
 	{
-		std::print("EXCEPTION (unknown type)");
+		std::print("EXCEPTION (unknown type)\n");
+		print_stacktrace();
 	}
+
 	return -1;
 }
