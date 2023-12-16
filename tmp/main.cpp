@@ -142,7 +142,7 @@ int online_classification(const nn_t& nn)
 		}
 		catch (const std::wstring& err)
 		{
-			wprint(L"{} error: \"{}\": {}\nPress any key to continue\n", 
+			wprint(L"{} error: \"{}\": {}\nPress any key to continue\n",
 				img.n_planes == 0 ? L"File read" : L"Classification", buffer, err
 			);
 		}
@@ -162,54 +162,54 @@ int main1()
 
 
 	nn_t nn_good = create_preset_topology_nn(), nn_pending, nn_new;
-	
+
 	fp rate, decay;
 	int64_t decay_n;
 	auto get_rate = [&] { return rate * powf(decay, -(fp)decay_n); };
 
 
 	auto serialize_state = [&]
-	{
-		std::ofstream fout(nn_path, std::ios::out | std::ios::binary);
-		serializer_t out(fout);
-
-		out(rate);
-		out(decay);
-		out(decay_n);
-		out.write_crc();
-		nn_good.write(out);
-
-		return (bool)out;
-	};
-	auto deserialize_state = [&] () -> bool
-	{
-		std::ifstream fin(nn_path, std::ios::in | std::ios::binary);
-		deserializer_t in(fin);
-
-		in(rate);
-		in(decay);
-		in(decay_n);
-		rfassert(in.test_crc());
-		nn_good.read(in);
-
-		return (bool)in;
-	};
-	auto deserialize_or_init = [&]
-	{
-		std::print("Session seed is {}\n", rng_init_value);
-		std::print("Trying to load existing model... ");
-		if (deserialize_state())
 		{
-			std::print("success\n");
-			return;
-		}
+			std::ofstream fout(nn_path, std::ios::out | std::ios::binary);
+			serializer_t out(fout);
 
-		std::print("no existing model found\nAll NN parameters set to random\nAll hyperparameters set to default values\n");
-		nn_good.randomize(rng);
-		rate = 0.001f;
-		decay = 1.1f;
-		decay_n = 0;
-	};
+			out(rate);
+			out(decay);
+			out(decay_n);
+			out.write_crc();
+			nn_good.write(out);
+
+			return (bool)out;
+		};
+	auto deserialize_state = [&]() -> bool
+		{
+			std::ifstream fin(nn_path, std::ios::in | std::ios::binary);
+			deserializer_t in(fin);
+
+			in(rate);
+			in(decay);
+			in(decay_n);
+			rfassert(in.test_crc());
+			nn_good.read(in);
+
+			return (bool)in;
+		};
+	auto deserialize_or_init = [&]
+		{
+			std::print("Session seed is {}\n", rng_init_value);
+			std::print("Trying to load existing model... ");
+			if (deserialize_state())
+			{
+				std::print("success\n");
+				return;
+			}
+
+			std::print("no existing model found\nAll NN parameters set to random\nAll hyperparameters set to default values\n");
+			nn_good.randomize(rng);
+			rate = 0.001f;
+			decay = 1.1f;
+			decay_n = 0;
+		};
 
 	deserialize_or_init();
 
@@ -243,23 +243,25 @@ int main1()
 	const size_t max_stochastic_batch = dataset.size();
 #endif
 	auto stochastic_shuffle = [&]
-	{
-		if (max_stochastic_batch == dataset.size())
-			return;
+		{
+			if (max_stochastic_batch == dataset.size())
+				return;
 
-		static std::mt19937_64 shuffle_rng(rng_init_value);
-		for (size_t i = 0; i < max_stochastic_batch; ++i)
-			std::swap(dataset[i], dataset[shuffle_rng() % (dataset.size() - i) + i]);
-	};
+			static std::mt19937_64 shuffle_rng(rng_init_value);
+			for (size_t i = 0; i < max_stochastic_batch; ++i)
+				std::swap(dataset[i], dataset[shuffle_rng() % (dataset.size() - i) + i]);
+		};
 
 
-	bool reset_pending = true;
+
 	std::print("evaluating initial cost... ");
 	auto good_cost = nn_eval_cost(nn_good, dataset, pool).first;
+	std::print("cost = {}\n", good_cost);
+
 	{
 		const auto good_stats = nn_eval_cost(nn_good, validation_dataset, pool).second;
-		std::print("cost = {}\nAC = {:.3g}%, TP ~ {:.3g}%, TN ~ {:.3g}%, FP ~ {:.3g}%, FN ~ {:.3g}%\n",
-			good_cost, good_stats.accuracy() * 100,
+		std::print("AC = {:.3g}%, TP ~ {:.3g}%, TN ~ {:.3g}%, FP ~ {:.3g}%, FN ~ {:.3g}%\n",
+			good_stats.accuracy() * 100,
 			good_stats.tp_frac() * 100, good_stats.tn_frac() * 100,
 			good_stats.fp_frac() * 100, good_stats.fn_frac() * 100
 		);
@@ -268,14 +270,14 @@ int main1()
 
 	auto gradient_descend = [&]
 	(nn_t& nn)
-	{
-		stochastic_shuffle();
-		return nn_apply_gradient_descend_iteration(nn, dataset, max_stochastic_batch, pool, get_rate());
-	};
+		{
+			stochastic_shuffle();
+			return nn_apply_gradient_descend_iteration(nn, dataset, max_stochastic_batch, pool, get_rate());
+		};
 
 
 	std::print("Training is running on {} threads\n", pool.size());
-	std::print("Using {} gradient descend\n", max_stochastic_batch == dataset.size() ?  "regular" : "stochastic");
+	std::print("Using {} gradient descend\n", max_stochastic_batch == dataset.size() ? "regular" : "stochastic");
 	std::print("Learning rate is {}\n", get_rate());
 	std::print("Press Ctrl-C to finish\nPress Ctrl-Break to cancel\n");
 
@@ -283,44 +285,47 @@ int main1()
 	bool continue_on_increased_cost = true;
 
 	auto settings_menu = [&]
-	{
-		enter_settings = false;
-		std::print(" Settings mode:\n");
-		std::print(" rate = {} (decay_n = {}) (q = up, a = down)\n", get_rate(), decay_n);
-		std::print(" continue_on_increased_cost = {} (w = change)\n", continue_on_increased_cost);
-		std::print(" ESC = continue\n");
-		std::print(" ~ = continue for one iteration\n");
-
-		while (true)
 		{
-			bool exit = false;
-			switch (_getch())
+			enter_settings = false;
+			std::print(" Settings mode:\n");
+			std::print(" rate = {} (decay_n = {}) (q = up, a = down)\n", get_rate(), decay_n);
+			std::print(" continue_on_increased_cost = {} (w = change)\n", continue_on_increased_cost);
+			std::print(" ESC = continue\n");
+			std::print(" ~ = continue for one iteration\n");
+
+			while (true)
 			{
-			case 'q':
-				--decay_n;
-				std::print(" Increasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
-				break;
-			case 'a':
-				++decay_n;
-				std::print(" Decreasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
-				break;
+				bool exit = false;
+				switch (_getch())
+				{
+				case 'q':
+					--decay_n;
+					std::print(" Increasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
+					break;
+				case 'a':
+					++decay_n;
+					std::print(" Decreasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
+					break;
 
-			case 'w':
-				continue_on_increased_cost = !continue_on_increased_cost;
-				std::print(" continue_on_increased_cost changed to {}\n", continue_on_increased_cost);
-				break;
+				case 'w':
+					continue_on_increased_cost = !continue_on_increased_cost;
+					std::print(" continue_on_increased_cost changed to {}\n", continue_on_increased_cost);
+					break;
 
-			case '`':
-				enter_settings = true;
-			case 27:
-				exit = true;
-				break;
-			}
+				case '`':
+					enter_settings = true;
+				case 27:
+					exit = true;
+					break;
+				}
 
-			if (exit)
-				break;
+				if (exit)
+					break;
+			};
 		};
-	};
+
+
+	bool reset_pending = true;
 
 	size_t iteration = 0;
 	while (true)
@@ -352,7 +357,7 @@ int main1()
 		if (continue_on_increased_cost || pending_cost < good_cost)
 		{
 			const auto pending_stats = nn_eval_cost(nn_pending, validation_dataset, pool).second;
-			std::print("{} ms, cost -> {} (d = {}), AC = {}%, FP ~ {}%, FN ~ {}%\n", 
+			std::print("{} ms, cost -> {} (d = {}), AC = {}%, FP ~ {}%, FN ~ {}%\n",
 				dt / 1000000, pending_cost, good_cost - pending_cost, pending_stats.accuracy() * 100, pending_stats.fp_frac() * 100, pending_stats.fn_frac() * 100);
 
 			std::swap(nn_good, nn_pending);
