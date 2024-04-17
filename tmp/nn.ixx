@@ -19,6 +19,7 @@ import diploma.serialization;
 import diploma.thread_pool;
 import diploma.bmp;
 import diploma.lin_alg;
+import diploma.utility;
 
 namespace fs = std::filesystem;
 namespace rn = std::ranges;
@@ -42,13 +43,13 @@ fp sigma(fp x)
 {
 	return 1 / (1 + ::expf(-x));
 }
-fp sigma_d(fp x)
+fp sigma_dfdx(fp x)
 {
 	const fp s = sigma(x);
 	return s * (1 - s);
 }
 
-activation_function_data sigmoid{ sigma, sigma_d };
+activation_function_data sigmoid{ sigma, sigma_dfdx };
 
 
 constexpr fp leaky_relu_param = (fp)0.01;
@@ -82,10 +83,10 @@ private:
 		activators.push_back(sigmoid);
 	}
 
-	void create1(size_t inputs, std::span<const unsigned> layer_sizes)
+	void create1(size_t inputs, std::span<const unsigned> perceptron_layers_sizes)
 	{
-		const size_t n = layer_sizes.size();
-		xassert(n >= 2, "Rejected NN topology with {} layers", n + 1);
+		const size_t n = perceptron_layers_sizes.size();
+		xassert(n >= 2, "Rejected NN topology with {} perceptron layers", n + 1);
 		
 		this->reset();
 
@@ -97,12 +98,12 @@ private:
 		init_activators(n);
 
 		for (size_t i = 0; i < n; ++i)
-			init_vector(this->biases[i], layer_sizes[i]);
+			init_vector(this->biases[i], perceptron_layers_sizes[i]);
 
 		size_t prev_layer_size = input_neurons;
 		for (size_t i = 0; i < n; ++i)
 		{
-			const size_t next_layer_size = layer_sizes[i];
+			const size_t next_layer_size = perceptron_layers_sizes[i];
 			init_matrix(this->weights[i], next_layer_size, prev_layer_size);
 			prev_layer_size = next_layer_size;
 		}
@@ -217,7 +218,7 @@ public:
 
 	static fpvector& get_thread_local_helper_vector()
 	{
-		nofree fpvector v;
+		nodestruct fpvector v;
 		return v;
 	}
 
@@ -256,42 +257,39 @@ struct data_pair
 	size_t id;
 };
 
-export constexpr size_t positive_idx = 0;
-export constexpr size_t negative_idx = 1;
-export constexpr size_t true_idx = 0;
-export constexpr size_t false_idx = 1;
-//implies ordering TP, FP, TN, FN
-
 export struct classification_statistics
 {
-	uint32_t vals[2][2]{};
-	uint32_t& get(size_t is_negative, size_t is_false) { return vals[is_negative][is_false]; }
+	uint32_t vals[3][3]{};
+	uint32_t& get(size_t predicted, size_t actual)
+	{
+		return vals[predicted][actual];
+	}
 
-	auto total() const
-	{
-		return std::accumulate(&vals[0][0], &vals[0][0] + 4, uint32_t());
-	}
-	float accuracy() const
-	{
-		const auto correct = this->vals[positive_idx][true_idx] + this->vals[negative_idx][true_idx];
-		return (float)correct / this->total();
-	}
-	float fp_frac() const
-	{
-		return (float)this->vals[positive_idx][false_idx] / this->total();
-	}
-	float fn_frac() const
-	{
-		return (float)this->vals[negative_idx][false_idx] / this->total();
-	}
-	float tp_frac() const
-	{
-		return (float)this->vals[positive_idx][true_idx] / this->total();
-	}
-	float tn_frac() const
-	{
-		return (float)this->vals[negative_idx][true_idx] / this->total();
-	}
+	//auto total() const
+	//{
+	//	return std::accumulate(&vals[0][0], &vals[0][0] + 4, uint32_t());
+	//}
+	//float accuracy() const
+	//{
+	//	const auto correct = this->vals[pneumonia_idx][other_idx] + this->vals[cancer_idx][other_idx];
+	//	return (float)correct / this->total();
+	//}
+	//float fp_frac() const
+	//{
+	//	return (float)this->vals[pneumonia_idx][false_idx] / this->total();
+	//}
+	//float fn_frac() const
+	//{
+	//	return (float)this->vals[cancer_idx][false_idx] / this->total();
+	//}
+	//float tp_frac() const
+	//{
+	//	return (float)this->vals[pneumonia_idx][other_idx] / this->total();
+	//}
+	//float tn_frac() const
+	//{
+	//	return (float)this->vals[cancer_idx][other_idx] / this->total();
+	//}
 };
 
 export std::pair<fp, classification_statistics> nn_eval_cost(const nn_t& nn, const std::vector<data_pair>& dataset, thread_pool& pool)
@@ -318,9 +316,7 @@ export std::pair<fp, classification_statistics> nn_eval_cost(const nn_t& nn, con
 			state.total_loss += cost_distance(data.output[i], eval_result[i]);
 		state.n++;
 
-		const bool predicted_positive = eval_result[0] > eval_result[1];
-		const bool actually_positive = data.output[0] > data.output[1];
-		++state.stats.get(!predicted_positive, predicted_positive != actually_positive);
+		++state.stats.get(get_max_idx(eval_result), get_max_idx(data.output));
 	};
 
 	pool.schedule_sized_work(0, dataset.size(), worker);
@@ -333,8 +329,8 @@ export std::pair<fp, classification_statistics> nn_eval_cost(const nn_t& nn, con
 	{
 		sum += x.total_loss;
 		div += x.n;
-		for (size_t i = 0; i < 4; ++i)
-			stats.vals[i / 2][i % 2] += x.stats.vals[i / 2][i % 2];
+		for (size_t i = 0; i < 9; ++i)
+			stats.vals[i / 3][i % 3] += x.stats.vals[i / 3][i % 3];
 	}
 
 	return { sum / div, stats };
@@ -379,13 +375,13 @@ auto nn_eval_cost_gradient(const nn_t& nn, const data_pair& pair)
 
 	xassert(expected.size() == layer_size(layers_count - 1), "Wrong expected output size");
 
-	nofree dynarray<matrix> dweights;
-	nofree dynarray<fpvector> dbiases;
+	nodestruct dynarray<matrix> dweights;
+	nodestruct dynarray<fpvector> dbiases;
 
-	nofree dynarray<fpvector> sums;
-	nofree dynarray<fpvector> activations;
+	nodestruct dynarray<fpvector> sums;
+	nodestruct dynarray<fpvector> activations;
 
-	nofree fpvector dactivations, new_dactivations;
+	nodestruct fpvector dactivations, new_dactivations;
 
 	resize_to_match(dweights, nn.weights);
 	resize_to_match(dbiases, nn.biases);
@@ -408,9 +404,10 @@ auto nn_eval_cost_gradient(const nn_t& nn, const data_pair& pair)
 	}
 
 	{
-		auto get_size = lambda(const auto & x, x.size());
-		auto sizes_range = vs::transform(nn.biases, get_size);
+		const auto get_size = lambda(const auto & x, x.size());
+		const auto sizes_range = vs::transform(nn.biases, get_size);
 		const size_t max_layer_size = rn::max(sizes_range);
+		//const size_t max_layer_size = rn::max(nn.biases, {}, get_size); //why do you not work
 
 		dactivations.reserve(max_layer_size);
 		new_dactivations.reserve(max_layer_size);
@@ -531,16 +528,16 @@ export auto nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pa
 
 	for (size_t l = 0; l < result.dweights.size(); ++l)
 	{
-		auto& weights = result.dweights[l];
-		for (size_t i = 0; i < weights.size(); ++i)
-			for (size_t j = 0; j < weights[i].size(); ++j)
-				weights[i][j] *= scale;
+		auto& dweights = result.dweights[l];
+		for (size_t i = 0; i < dweights.size(); ++i)
+			for (size_t j = 0; j < dweights[i].size(); ++j)
+				dweights[i][j] *= scale;
 	}
 	for (size_t l = 0; l < result.dbiases.size(); ++l)
 	{
-		auto& biases = result.dbiases[l];
-		for (size_t i = 0; i < biases.size(); ++i)
-			biases[i] *= scale;
+		auto& dbiases = result.dbiases[l];
+		for (size_t i = 0; i < dbiases.size(); ++i)
+			dbiases[i] *= scale;
 	}
 
 	for (size_t l = 0; l < result.dweights.size(); ++l)
@@ -556,36 +553,39 @@ export auto nn_apply_gradient_descend_iteration(nn_t& nn, const dynarray<data_pa
 
 
 template<class Img>
-auto read_dataset(const bool grayscale, cpath class_positive, cpath class_negative)
+auto read_dataset(const bool grayscale, cpath dataset_root)
 {
 	std::vector<data_pair> dataset;
 
 	Img img;
 
 	auto traverse = [&]
-	(cpath p, const fpvector& output)
+	(cpath p, const fpvector& output) {
+		const size_t size_before = dataset.size();
+		for (auto& entry : std::filesystem::directory_iterator(p))
 		{
-			for (auto& entry : std::filesystem::directory_iterator(p))
-			{
-				img.read(entry.path(), grayscale);
-				dataset.emplace_back(std::move(img.planes[0]), output, dataset.size());
-			}
-		};
+			img.read(entry.path(), grayscale);
+			dataset.emplace_back(std::move(img.planes[0]), output, dataset.size());
+		}
+		const size_t size_after = dataset.size();
+		xassert(size_before != size_after, "Empty dataset directory \"{}\"", wide_to_narrow(p));
+	};
 
-	traverse(class_positive, { 1, 0 });
-	traverse(class_negative, { 0, 1 });
+	traverse(dataset_root / "pneumonia", { 1, 0, 0 });
+	traverse(dataset_root / "cancer", { 0, 1, 0 });
+	traverse(dataset_root / "other", { 0, 0, 1 });
 
 	return dataset;
 }
 export auto read_training_dataset()
 {
 	using T = bmp_image<fp>;
-	return read_dataset<T>(true, "C:\\dataset\\training\\Positiv1000", "C:\\dataset\\training\\Negativ1000");
+	return read_dataset<T>(true, "C:\\dataset\\training");
 }
 export auto read_test_dataset()
 {
 	using T = bmp_image<fp>;
-	return read_dataset<T>(true, "C:\\dataset\\validate\\positiv_train200", "C:\\dataset\\validate\\negativ_train200");
+	return read_dataset<T>(true, "C:\\dataset\\test");
 }
 
 
@@ -594,8 +594,9 @@ export auto read_test_dataset()
 
 export auto create_preset_topology_nn()
 {
-	const auto layers = { 40u, 10000u, 2u };
+	const auto perceptron_layers = { 40u, 10000u, 3u };
+
 	nn_t nn;
-	nn.create(65536, layers);
+	nn.create(65536, perceptron_layers);
 	return nn;
 }

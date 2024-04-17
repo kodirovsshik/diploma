@@ -7,13 +7,10 @@ module;
 
 
 export module diploma.lin_alg;
+import diploma.utility;
 
 export
 {
-	template<class T>
-	using dynarray = std::vector<T>;
-
-	using fp = float;
 	using fpvector = dynarray<fp>;
 	using matrix = dynarray<fpvector>;
 

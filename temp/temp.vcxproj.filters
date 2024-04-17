@@ -13,39 +13,10 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
-    <Filter Include="Module FIles">
-      <UniqueIdentifier>{097b3b9e-92fe-48e7-9b4d-ce123b3376aa}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp">
+    <ClCompile Include="tmain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="bmp.ixx">
-      <Filter>Module FIles</Filter>
-    </ClCompile>
-    <ClCompile Include="crc.ixx">
-      <Filter>Module FIles</Filter>
-    </ClCompile>
-    <ClCompile Include="thread_pool.ixx">
-      <Filter>Module FIles</Filter>
-    </ClCompile>
-    <ClCompile Include="serialization.ixx">
-      <Filter>Module FIles</Filter>
-    </ClCompile>
-    <ClCompile Include="nn.ixx">
-      <Filter>Module FIles</Filter>
-    </ClCompile>
-    <ClCompile Include="lin_alg.ixx">
-      <Filter>Module FIles</Filter>
-    </ClCompile>
-    <ClCompile Include="utility.ixx">
-      <Filter>Module FIles</Filter>
-    </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="defs.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
   </ItemGroup>
 </Project>

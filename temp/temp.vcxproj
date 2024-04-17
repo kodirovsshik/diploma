@@ -21,10 +21,9 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{897f1f62-828b-4412-86a6-4d1abc2ca304}</ProjectGuid>
-    <RootNamespace>tmp</RootNamespace>
+    <ProjectGuid>{aad26086-3f91-4b33-a8e4-29a4b8822a11}</ProjectGuid>
+    <RootNamespace>temp</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <ProjectName>nn</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -79,11 +78,6 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
-      <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
-      <BuildStlModules>false</BuildStlModules>
-      <AdditionalIncludeDirectories>$(SOlutionDir)..\libksn_modular\ksn\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <UseStandardPreprocessor>true</UseStandardPreprocessor>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -100,11 +94,6 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
-      <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
-      <BuildStlModules>false</BuildStlModules>
-      <AdditionalIncludeDirectories>$(SOlutionDir)..\libksn_modular\ksn\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <UseStandardPreprocessor>true</UseStandardPreprocessor>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -121,11 +110,6 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
-      <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
-      <BuildStlModules>false</BuildStlModules>
-      <AdditionalIncludeDirectories>$(SOlutionDir)..\libksn_modular\ksn\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <UseStandardPreprocessor>true</UseStandardPreprocessor>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -142,11 +126,6 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
-      <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
-      <BuildStlModules>false</BuildStlModules>
-      <AdditionalIncludeDirectories>$(SOlutionDir)..\libksn_modular\ksn\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <UseStandardPreprocessor>true</UseStandardPreprocessor>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -156,17 +135,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="bmp.ixx" />
-    <ClCompile Include="crc.ixx" />
-    <ClCompile Include="lin_alg.ixx" />
-    <ClCompile Include="main.cpp" />
-    <ClCompile Include="nn.ixx" />
-    <ClCompile Include="serialization.ixx" />
-    <ClCompile Include="thread_pool.ixx" />
-    <ClCompile Include="utility.ixx" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="defs.hpp" />
+    <ClCompile Include="tmain.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

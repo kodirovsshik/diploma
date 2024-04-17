@@ -4,24 +4,27 @@ import diploma.bmp;
 import diploma.thread_pool;
 import diploma.serialization;
 import diploma.nn;
+import diploma.lin_alg;
+import diploma.utility;
 
 #include <locale.h>
 #include <stdint.h>
 
-#include <vector>
+//#include <vector>
 #include <random>
 #include <chrono>
 #include <filesystem>
 #include <print>
 #include <fstream>
 #include <stacktrace>
+#include <numeric>
+//#include <ranges>
 
+#define NOMINMAX
 #include <Windows.h>
 
 #include "defs.hpp"
 
-#undef min
-#undef max
 
 
 const auto clock_f = std::chrono::steady_clock::now;
@@ -55,11 +58,16 @@ decltype(auto) timeit(F&& f, uint64_t& dt)
 	{
 		const auto t1 = clock_f();
 		decltype(auto) result = f();
+		doNotOptimizeOut(result);
 		const auto t2 = clock_f();
 
 		dt = (t2 - t1).count();
-		doNotOptimizeOut(result);
-		return result;
+
+		//using std::forward on a local variable is bad
+		if constexpr (std::is_reference_v<decltype(result)>)
+			return std::forward<decltype(result)>(result);
+		else
+			return result;
 	}
 }
 
@@ -84,25 +92,6 @@ BOOL console_ctrl_handler(DWORD val)
 	}
 }
 
-
-
-std::string wide_to_narrow(const std::wstring& w)
-{
-	const size_t mbsz =
-		WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-	std::string s(mbsz, ' ');
-	WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), (int)mbsz, nullptr, nullptr);
-	return s;
-}
-
-
-#define wprint(fmt, ...) { fputws(std::format(fmt __VA_OPT__(,) __VA_ARGS__).data(), stdout); }
-
-int __tlregdtor()
-{
-	//MSVC bug workaround
-	return 0;
-}
 
 int online_classification(const nn_t& nn)
 {
@@ -134,10 +123,10 @@ int online_classification(const nn_t& nn)
 
 			auto& data = img.planes[0];
 			nn.eval(data);
-			auto sum = data[0] + data[1];
-			std::print("Data: {}, {} (status: {})\n",
-				data[0] / sum, data[1] / sum,
-				data[0] > data[1] ? "positive" : "negative"
+			normalize(data);
+
+			std::print("Data: {}, {}, {} (status: {})\n",
+				data[0], data[1], data[2], classification_to_string(data)
 			);
 		}
 		catch (const std::wstring& err)
@@ -152,64 +141,62 @@ int online_classification(const nn_t& nn)
 
 int main1()
 {
-	cpath base_dir = std::format("D:\\nn\\{}\\", rng_init_value),
+	cpath 
+		base_dir = std::format("D:\\nn\\{}\\", rng_init_value),
 		nn_path = base_dir / "a.nn";
 
 	std::filesystem::create_directories(base_dir);
 
 
-	uint64_t dt;
-
-
 	nn_t nn_good = create_preset_topology_nn(), nn_pending, nn_new;
+
+	uint64_t dt;
 
 	fp rate, decay;
 	int64_t decay_n;
 	auto get_rate = [&] { return rate * powf(decay, -(fp)decay_n); };
 
 
-	auto serialize_state = [&]
-		{
-			std::ofstream fout(nn_path, std::ios::out | std::ios::binary);
-			serializer_t out(fout);
+	auto serialize_state = [&] {
+		std::ofstream fout(nn_path, std::ios::out | std::ios::binary);
+		serializer_t out(fout);
 
-			out(rate);
-			out(decay);
-			out(decay_n);
-			out.write_crc();
-			nn_good.write(out);
+		out(rate);
+		out(decay);
+		out(decay_n);
+		out.write_crc();
+		nn_good.write(out);
 
-			return (bool)out;
-		};
-	auto deserialize_state = [&]() -> bool
-		{
-			std::ifstream fin(nn_path, std::ios::in | std::ios::binary);
-			deserializer_t in(fin);
+		return (bool)out;
+	};
+	auto deserialize_state = [&] {
+		std::ifstream fin(nn_path, std::ios::in | std::ios::binary);
+		deserializer_t in(fin);
 
-			in(rate);
-			in(decay);
-			in(decay_n);
-			rfassert(in.test_crc());
-			nn_good.read(in);
+		in(rate);
+		in(decay);
+		in(decay_n);
+		rfassert(in.test_crc());
+		nn_good.read(in);
 
-			return (bool)in;
-		};
-	auto deserialize_or_init = [&]
-		{
-			std::print("Session seed is {}\n", rng_init_value);
-			std::print("Trying to load existing model... ");
-			if (deserialize_state())
-			{
-				std::print("success\n");
-				return;
-			}
-
-			std::print("no existing model found\nAll NN parameters set to random\nAll hyperparameters set to default values\n");
-			nn_good.randomize(rng);
-			rate = 0.001f;
-			decay = 1.1f;
-			decay_n = 0;
-		};
+		return (bool)in;
+	};
+	auto init_state_fallback = [&] {
+		std::print("no existing model found\nAll NN parameters are set to random\nAll hyperparameters are set to default values\n");
+		nn_good.randomize(rng);
+		rate = 0.001f;
+		decay = 1.1f;
+		decay_n = 0;
+	};
+	auto deserialize_or_init = [&] {
+		std::print("Session seed is {}\n", rng_init_value);
+		std::print("Trying to load existing model... ");
+		if (!deserialize_state())
+			return init_state_fallback();
+		
+		std::print("success\n");
+		return;
+	};
 
 	deserialize_or_init();
 
@@ -227,102 +214,106 @@ int main1()
 
 	thread_pool pool;
 
+	std::print("loading test dataset... ");
+	const auto test_dataset = timeit([] { return read_test_dataset(); }, dt);
+	std::print("size = {}, dt = {} ms\n", test_dataset.size(), dt / 1000000);
+
 	std::print("loading training dataset... ");
-	auto dataset = timeit([] { return read_training_dataset(); }, dt);
-	std::print("size = {}, dt = {} ms\n", dataset.size(), dt / 1000000);
-
-	std::print("loading validation dataset... ");
-	const auto validation_dataset = timeit([] { return read_test_dataset(); }, dt);
-	std::print("size = {}, dt = {} ms\n", validation_dataset.size(), dt / 1000000);
+	//Not const because has to be shuffled for stochastic gradient descend
+	auto training_dataset = timeit([] { return read_training_dataset(); }, dt);
+	std::print("size = {}, dt = {} ms\n", training_dataset.size(), dt / 1000000);
 
 
 
-#if 0 //stochastic
+#if 0 
+	//stochastic
 	const size_t max_stochastic_batch = 1000;
 #else
-	const size_t max_stochastic_batch = dataset.size();
+	const size_t max_stochastic_batch = training_dataset.size();
 #endif
-	auto stochastic_shuffle = [&]
-		{
-			if (max_stochastic_batch == dataset.size())
-				return;
+	auto stochastic_shuffle = [&] {
+		if (max_stochastic_batch == training_dataset.size())
+			return;
 
-			static std::mt19937_64 shuffle_rng(rng_init_value);
-			for (size_t i = 0; i < max_stochastic_batch; ++i)
-				std::swap(dataset[i], dataset[shuffle_rng() % (dataset.size() - i) + i]);
-		};
-
-
-
-	std::print("evaluating initial cost... ");
-	auto good_cost = nn_eval_cost(nn_good, dataset, pool).first;
-	std::print("cost = {}\n", good_cost);
-
-	{
-		const auto good_stats = nn_eval_cost(nn_good, validation_dataset, pool).second;
-		std::print("AC = {:.3g}%, TP ~ {:.3g}%, TN ~ {:.3g}%, FP ~ {:.3g}%, FN ~ {:.3g}%\n",
-			good_stats.accuracy() * 100,
-			good_stats.tp_frac() * 100, good_stats.tn_frac() * 100,
-			good_stats.fp_frac() * 100, good_stats.fn_frac() * 100
-		);
-	}
+		static std::mt19937_64 shuffle_rng(rng_init_value);
+		for (size_t i = 0; i < max_stochastic_batch; ++i)
+			std::swap(training_dataset[i], training_dataset[shuffle_rng() % (training_dataset.size() - i) + i]);
+	};
 
 
 	auto gradient_descend = [&]
-	(nn_t& nn)
-		{
-			stochastic_shuffle();
-			return nn_apply_gradient_descend_iteration(nn, dataset, max_stochastic_batch, pool, get_rate());
-		};
-
-
-	std::print("Training is running on {} threads\n", pool.size());
-	std::print("Using {} gradient descend\n", max_stochastic_batch == dataset.size() ? "regular" : "stochastic");
-	std::print("Learning rate is {}\n", get_rate());
-	std::print("Press Ctrl-C to finish\nPress Ctrl-Break to cancel\n");
+	(nn_t& nn) {
+		stochastic_shuffle();
+		return nn_apply_gradient_descend_iteration(nn, training_dataset, max_stochastic_batch, pool, get_rate());
+	};
 
 	bool enter_settings = true;
 	bool continue_on_increased_cost = true;
 
 	auto settings_menu = [&]
-		{
-			enter_settings = false;
-			std::print(" Settings mode:\n");
-			std::print(" rate = {} (decay_n = {}) (q = up, a = down)\n", get_rate(), decay_n);
-			std::print(" continue_on_increased_cost = {} (w = change)\n", continue_on_increased_cost);
-			std::print(" ESC = continue\n");
-			std::print(" ~ = continue for one iteration\n");
+	{
+		enter_settings = false;
+		std::print(" Settings mode:\n");
+		std::print(" rate = {} (decay_n = {}) (q = up, a = down)\n", get_rate(), decay_n);
+		std::print(" continue_on_increased_cost = {} (w = change)\n", continue_on_increased_cost);
+		std::print(" ESC = continue\n");
+		std::print(" ~ = continue for one iteration\n");
 
-			while (true)
-			{
-				bool exit = false;
-				switch (_getch())
-				{
-				case 'q':
-					--decay_n;
-					std::print(" Increasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
-					break;
-				case 'a':
-					++decay_n;
-					std::print(" Decreasing learning rate by user input: {} (n = {})\n", get_rate(), decay_n);
-					break;
-
-				case 'w':
-					continue_on_increased_cost = !continue_on_increased_cost;
-					std::print(" continue_on_increased_cost changed to {}\n", continue_on_increased_cost);
-					break;
-
-				case '`':
-					enter_settings = true;
-				case 27:
-					exit = true;
-					break;
-				}
-
-				if (exit)
-					break;
-			};
+		auto change_learning_rate = [&] (bool increase) {
+			if (increase) ++decay_n; else --decay_n;
+			std::print(" {}creasing learning rate by user input: {} (n = {})\n", increase ? "In" : "De", get_rate(), decay_n);
 		};
+
+		while (true)
+		{
+			bool exit = false;
+			switch (_getch())
+			{
+			case 'q':
+				change_learning_rate(false);
+				break;
+			case 'a':
+				change_learning_rate(true);
+				break;
+
+			case 'w':
+				continue_on_increased_cost = !continue_on_increased_cost;
+				std::print(" continue_on_increased_cost changed to {}\n", continue_on_increased_cost);
+				break;
+
+			case '`':
+				enter_settings = true;
+			case 27:
+				exit = true;
+				break;
+			}
+
+			if (exit)
+				break;
+		};
+	};
+
+
+
+	std::print("evaluating initial cost... ");
+	auto good_cost = nn_eval_cost(nn_good, training_dataset, pool).first;
+	std::print("cost = {}\n", good_cost);
+
+	{
+		const auto good_stats = nn_eval_cost(nn_good, test_dataset, pool).second;
+		//std::println("AC = {:.3g}%, TP ~ {:.3g}%, TN ~ {:.3g}%, FP ~ {:.3g}%, FN ~ {:.3g}%",
+		//	good_stats.accuracy() * 100,
+		//	good_stats.tp_frac() * 100, good_stats.tn_frac() * 100,
+		//	good_stats.fp_frac() * 100, good_stats.fn_frac() * 100
+		//);
+	}
+
+
+	std::println("Training is running on {} threads", pool.size());
+	std::println("Using {} gradient descend", max_stochastic_batch == training_dataset.size() ? "regular" : "stochastic");
+	std::println("Learning rate is {}", get_rate());
+	std::println("Press Ctrl-C to finish");
+	std::println("Press Ctrl-Break to cancel");
 
 
 	bool reset_pending = true;
@@ -356,9 +347,9 @@ int main1()
 
 		if (continue_on_increased_cost || pending_cost < good_cost)
 		{
-			const auto pending_stats = nn_eval_cost(nn_pending, validation_dataset, pool).second;
-			std::print("{} ms, cost -> {} (d = {}), AC = {}%, FP ~ {}%, FN ~ {}%\n",
-				dt / 1000000, pending_cost, good_cost - pending_cost, pending_stats.accuracy() * 100, pending_stats.fp_frac() * 100, pending_stats.fn_frac() * 100);
+			const auto pending_stats = nn_eval_cost(nn_pending, test_dataset, pool).second;
+			//std::print("{} ms, cost -> {} (d = {}), AC = {}%, FP ~ {}%, FN ~ {}%\n",
+			//	dt / 1000000, pending_cost, good_cost - pending_cost, pending_stats.accuracy() * 100, pending_stats.fp_frac() * 100, pending_stats.fn_frac() * 100);
 
 			std::swap(nn_good, nn_pending);
 			std::swap(nn_new, nn_pending);
@@ -405,7 +396,18 @@ void init()
 
 void print_stacktrace()
 {
-	std::print("STACK TRACE:\n{}\n", std::stacktrace::current());
+	std::print("STACKTRACE:\n{}\n", std::stacktrace::current());
+}
+
+void print_basic_exception_info(const char* type, const char* what)
+{
+	std::print("\nEXCEPTION {}\nwhat() = {}\n", type, what);
+}
+
+template<class E>
+void process_basic_exception(const E& e)
+{
+	print_basic_exception_info(typeid(e).name(), e.what());
 }
 
 int main()
@@ -417,23 +419,23 @@ int main()
 	}
 	catch (const std::filesystem::filesystem_error& e)
 	{
-		std::print("EXCEPTION std::filesystem::filesystem_error\nwhat() = {}\n", e.what());
-		wprint(L"path1() = {}\npath2 = {}\n", e.path1().wstring(), e.path2().wstring());
+		process_basic_exception(e);
+		wprint(L"path1() = \"{}\"\npath2() = \"{}\"\n", e.path1().wstring(), e.path2().wstring());
 		print_stacktrace();
 	}
 	catch (const std::exception& e)
 	{
-		std::print("EXCEPTION std::exception\nwhat() = {}\n", e.what());
+		process_basic_exception(e);
 		print_stacktrace();
 	}
 	catch (const std::wstring& str)
 	{
-		wprint(L"EXCEPTION std::wstring\nwhat() = {}\n", str);
+		print_basic_exception_info("std::wstring", wide_to_narrow(str).data());
 		print_stacktrace();
 	}
 	catch (...)
 	{
-		std::print("EXCEPTION (unknown type)\n");
+		print_basic_exception_info("(unknown type)", "(null)");
 		print_stacktrace();
 	}
 

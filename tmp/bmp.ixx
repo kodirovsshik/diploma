@@ -10,7 +10,7 @@ module;
 
 export module diploma.bmp;
 
-import diploma.lin_alg;
+import diploma.utility;
 
 
 namespace fs = std::filesystem;
@@ -46,7 +46,7 @@ T iabs(T x)
 template<class fp_t>
 void bmp_image<fp_t>::read(cpath filename, bool grayscale)
 {
-	nofree std::vector<char> file_buffer;
+	nodestruct std::vector<char> file_buffer;
 	size_t file_ptr = 0;
 
 	{
