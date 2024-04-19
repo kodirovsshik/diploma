@@ -3,6 +3,8 @@
 #include <fstream>
 #include <limits>
 #include <print>
+#include <unordered_set>
+#include <random>
 
 using path = std::filesystem::path;
 using cpath = const path&;
@@ -91,23 +93,30 @@ public:
 	}
 };
 
+
+
+
+
+
 const sw diseases[] = {
 	{"No Finding"},
-	{"Cardiomegaly"},
-	{"Hernia"}, //110
-	{"Mass"},
-	{"Nodule"},
 	{"Infiltration"},
-	{"Emphysema"}, //892
-	{"Effusion"},
 	{"Atelectasis"},
+	{"Effusion"},
+	{"Nodule"},
 	{"Pneumothorax"},
-	{"Pleural_Thickening"},
-	{"Fibrosis"},
+	{"Mass"},
 	{"Consolidation"},
-	{"Edema"}, //628
-	{"Pneumonia"}, //322
+	{"Pleural Thickening"},
+	{"Cardiomegaly"},
+	{"Emphysema"},
+	{"Fibrosis"},
+	{"Edema"},
+	{"Pneumonia"},
+	{"Hernia"},
 };
+
+constexpr size_t categories_count = std::size(diseases);
 
 
 size_t disease_to_idx(csw disease)
@@ -122,43 +131,60 @@ size_t disease_to_idx(csw disease)
 	throw;
 }
 
-int main1()
+unsigned directory_files_count(cpath p)
 {
-	cpath dataset_root = "D:/archive(1)";
+	unsigned result = 0;
+	for (const auto& entry : std::filesystem::directory_iterator(p))
+		if (entry.is_regular_file())
+			++result;
+	return result;
+}
 
-	auto csv = csvreader::new_from_file(dataset_root / "Data_Entry_2017.csv");
-	csv.skip_line();
+void move_dir_contents(cpath from, cpath to)
+{
+	for (const auto& entry : std::filesystem::directory_iterator(from))
+		std::filesystem::rename(entry.path(), to / entry.path().filename());
+}
 
-	auto unique_category = []
-	(const auto& line) -> bool
+
+
+int test_dataset_generator()
+{
+	const double test_dataset_fraction = 0.2;
+
+	cpath images_root = "E:/backup/archive(1)/images";
+	cpath images_train = images_root / "train";
+	cpath images_test = images_root / "test";
+
+	std::mt19937_64 rng(std::random_device{}());
+
+	std::unordered_set<unsigned> test_indices;
+	for (int category_number = 0; category_number < categories_count; ++category_number)
 	{
-		return !line[1].contains('|');
-	};
+		std::print("Category {} \"{}\": ", category_number, diseases[category_number]);
 
-	cpath images_old = dataset_root / "images";
-	cpath images_new = dataset_root / "images_filtered";
+		cpath current_train_dir = images_train / std::to_string(category_number);
+		cpath current_test_dir = images_test / std::to_string(category_number);
+		move_dir_contents(current_test_dir, current_train_dir);
 
-	std::filesystem::create_directory(images_new);
-	for (size_t i = 0; i < std::size(diseases); ++i)
-		std::filesystem::create_directory(images_new / std::to_string(i));
+		const unsigned n_total_images = directory_files_count(current_train_dir);
+		const unsigned n_test_images = (unsigned)(n_total_images * test_dataset_fraction * (1 - DBL_EPSILON) + 1);
+		std::print("{} total images, {} test images", n_total_images, n_test_images);
 
-	while (true)
-	{
-		const auto line = csv.read_line();
-		if (line.empty())
-			break;
 
-		cpath in_file = images_old / line[0];
+		std::uniform_int_distribution<unsigned> distr(0, n_total_images - 1);
+		test_indices.clear();
+		while (test_indices.size() != n_test_images)
+			test_indices.insert(distr(rng));
 
-		if (!unique_category(line))
-			continue;
-		if (!std::filesystem::exists(in_file))
-			continue;
-
-		const auto cateory_directory = std::to_string(disease_to_idx(line[1]));
-		cpath out_file = images_new / cateory_directory / line[0];
-
-		std::filesystem::rename(in_file, out_file);
+		unsigned file_idx = 0;
+		for (const auto& entry : std::filesystem::directory_iterator(current_train_dir))
+		{
+			if (!test_indices.contains(file_idx++))
+				continue;
+			std::filesystem::rename(entry.path(), current_test_dir / entry.path().filename());
+		}
+		std::println(" - done");
 	}
 
 	return 0;
@@ -174,7 +200,7 @@ int main()
 
 	try
 	{
-		return main1();
+		return test_dataset_generator();
 	}
 	catch (const std::filesystem::filesystem_error& e)
 	{
