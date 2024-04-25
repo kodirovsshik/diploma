@@ -6,6 +6,8 @@
 *.txt
 *.nn
 
+tpy/data
+
 # User-specific files
 *.rsuser
 *.suo
