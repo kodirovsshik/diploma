@@ -27,4 +27,9 @@
 using cpath = const std::filesystem::path&;
 
 #pragma warning(disable : 4005)
-#define image_classes_xlist X(0, pneumonia) X(1, cancer) X(2, other)
+#define image_classes_xlist X(0, pneumonia) X(1, other)
+
+#define EXPORT_BEGIN export{
+#define EXPORT_END }
+
+#define DO_DEBUG_CHECKS 1

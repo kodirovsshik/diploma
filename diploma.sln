@@ -14,6 +14,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "temp", "temp\temp.vcxproj",
 EndProject
 Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "tpy", "tpy\tpy.pyproj", "{920F1610-F30F-481F-91B8-B2D9C7899D30}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "diploma2", "diploma2\diploma2.vcxproj", "{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -54,6 +56,18 @@ Global
 		{920F1610-F30F-481F-91B8-B2D9C7899D30}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{920F1610-F30F-481F-91B8-B2D9C7899D30}.Release|x64.ActiveCfg = Release|Any CPU
 		{920F1610-F30F-481F-91B8-B2D9C7899D30}.Release|x86.ActiveCfg = Release|Any CPU
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Debug|Any CPU.Build.0 = Debug|x64
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Debug|x64.ActiveCfg = Debug|x64
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Debug|x64.Build.0 = Debug|x64
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Debug|x86.ActiveCfg = Debug|Win32
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Debug|x86.Build.0 = Debug|Win32
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Release|Any CPU.ActiveCfg = Release|x64
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Release|Any CPU.Build.0 = Release|x64
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Release|x64.ActiveCfg = Release|x64
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Release|x64.Build.0 = Release|x64
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Release|x86.ActiveCfg = Release|Win32
+		{7CFB346D-FE37-491E-B2CA-82CFE9D2B2F8}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -14,13 +14,11 @@ module;
 
 export module diploma.utility;
 
-export
-{
+EXPORT_BEGIN
+
 #define X(num, name) constexpr size_t name ## _idx = num;
 	image_classes_xlist;
 
-	template<class T>
-	using dynarray = std::vector<T>;
 	using fp = float;
 
 	std::string wide_to_narrow(const std::wstring& w)
@@ -32,10 +30,39 @@ export
 		return s;
 	}
 
-	int __tlregdtor()
+	template<class T>
+	T safe_mul(T a, T b)
 	{
-		//MSVC bug workaround
-		return 0;
+		if constexpr (DO_DEBUG_CHECKS)
+		{
+			if (a == 0 || b == 0)
+				return 0;
+
+			const auto max = std::numeric_limits<T>::max();
+
+			if (max / b < a)
+				throw;
+			else if (max / b == a && max % b != 0)
+				throw;
+		}
+		return a * b;
+	}
+	template<class T>
+	T safe_add(T a, T b)
+	{
+		if constexpr (DO_DEBUG_CHECKS)
+		{
+			const auto max = std::numeric_limits<T>::max();
+
+			if (a > max - b)
+				throw;
+		}
+		return a + b;
+	}
+	template<class T>
+	T safe_fma(T a, T b, T c)
+	{
+		return safe_add(safe_mul(a, b), c);
 	}
 
 	template<class R>
@@ -55,19 +82,5 @@ export
 		return (size_t)std::get<0>(max_enumerated_pair);
 	}
 
-//#define X(num, name)
+EXPORT_END
 
-	std::string_view classification_to_string(const dynarray<fp>& stats)
-	{
-		xassert(stats.size() == 3, "Incorrect classification result vector of size {} (expected 3)", stats.size());
-		switch (get_max_idx(stats))
-		{
-
-#define X(num, name) case num: return #name;
-		image_classes_xlist;
-
-		default:
-			std::unreachable();
-		}
-	}
-}
