@@ -1,3 +1,4 @@
+
 module;
 
 #include "defs.hpp"
@@ -18,6 +19,10 @@ struct tensor_dims
 	size_t height{};
 	size_t width{};
 	size_t depth{};
+
+	tensor_dims() = default;
+	tensor_dims(size_t h, size_t w = 1, size_t d = 1)
+		: height(h), width(w), depth(d) {}
 
 	size_t total() const { return safe_mul(depth, this->image_size()); }
 	size_t image_size() const { return safe_mul(width, height); }
@@ -49,9 +54,33 @@ class tensor
 
 	struct M
 	{
-		std::vector<fp> data;
+#if _KSN_IS_DEBUG_BUILD
+		std::span<fp> data_span;
+#endif
+
 		tensor_dims dims;
+		size_t capacity = 0;
+		std::unique_ptr<fp[]> data = nullptr;
+
+		void allocate(tensor_dims dims)
+		{
+			data = std::make_unique<fp[]>(dims.total());
+			capacity = dims.total();
+			this->dims = dims;
+#if _KSN_IS_DEBUG_BUILD
+			data_span = { data.get(), dims.total() };
+#endif
+		}
+		void resize(tensor_dims dims)
+		{
+			if (dims.total() > capacity)
+				allocate(dims);
+			else
+				this->dims = dims;
+		}
 	} m;
+
+	tensor(M&& m) : m(std::move(m)) {}
 
 	template<class T>
 	using nl = std::numeric_limits<T>;
@@ -59,26 +88,118 @@ class tensor
 	static constexpr idx_t _default_idx = nl<idx_t>::is_signed ? nl<idx_t>::min() + 1 : nl<idx_t>::max();
 	static constexpr idx_t default_idx = DO_DEBUG_CHECKS ? _default_idx : 0;
 
+	template<class R>
+	static M init_from_range_with_dims(const R& r, tensor_dims dims)
+	{
+		xassert(dims.total() == std::size(r), "tensor::from_range: size mismatch");
+
+		M m;
+		m.allocate(dims);
+		std::copy(std::begin(r), std::end(r), m.data.get());
+		return m;
+	}
+	template<class R>
+	static M init_from_range(const R& r)
+	{
+		return init_from_range_with_dims(r, std::size(r));
+	}
+
+	void internal_reset()
+	{
+		m = {};
+	}
+
+
 public:
 	tensor() = default;
+	tensor(const tensor& other)
+		: m(init_from_range_with_dims(other, other.dims())) {}
+	tensor(tensor&& o) noexcept
+		: m(std::move(o.m))
+	{
+		o.internal_reset();
+	}
+
+	tensor& operator=(const tensor& other)
+	{
+		this->tensor::tensor(other);
+		return *this;
+	}
+	tensor& operator=(tensor&& rhs) noexcept
+	{
+		this->m = std::move(rhs.m);
+		rhs.internal_reset();
+		return *this;
+	}
+
+
+	explicit tensor(size_t h, size_t w = 1, size_t d = 1)
+		: tensor(tensor_dims{ h, w, d }) {}
+
 	tensor(tensor_dims dims)
 	{
-		this->create_storage(dims);
+		this->resize_storage(dims);
 	}
-	void create_storage(tensor_dims dims)
+
+
+	template<class R>
+	static tensor from_range(const R& r)
 	{
-		m.data.resize(dims.total());
+		return tensor{ init_from_range(r) };
+	}
+	static tensor from_range(std::initializer_list<fp> r)
+	{
+		return tensor{ init_from_range(r) };
+	}
+
+
+	template<class MapFn, class... Args>
+	void map_from(const tensor& rhs, MapFn&& fn, Args&& ...args)
+	{
+		this->resize_storage(rhs.dims());
+		for (size_t i = 0; i < rhs.size(); ++i)
+			(*this)[i] = xinvoke(fn, args, rhs[i]);
+	}
+
+	void reshape(tensor_dims dims)
+	{
+		xassert(dims.total() == size(), "tensor::reshape: invalid new shape");
 		m.dims = dims;
 	}
-	size_t total() const noexcept { return m.dims.total(); };
+
+	void resize_storage(tensor_dims dims)
+	{
+		m.resize(dims);
+	}
+	void resize_clear_storage(tensor_dims dims)
+	{
+		resize_storage(dims);
+		zero_out(); //TODO optimize - conditional calling
+	}
+	void zero_out()
+	{
+		memset(data(), 0, size() * sizeof(fp));
+	}
+	void clear()
+	{
+		m.dims = {};
+	}
+	void deallocate()
+	{
+		internal_reset();
+	}
+
+	size_t size() const noexcept { return m.dims.total(); };
 
 	auto dims() const noexcept { return m.dims; }
 
-	auto data() noexcept { return m.data.data(); }
-	auto data() const noexcept { return m.data.data(); }
+	auto data() noexcept { return m.data.get(); }
+	auto data() const noexcept { return m.data.get(); }
 
 	auto begin() { return data(); }
-	auto end() { return begin() + total(); }
+	auto begin() const { return data(); }
+	auto end() { return begin() + size(); }
+	auto end() const { return begin() + size(); }
 
 	fp& operator()(idx_t y = default_idx, idx_t x = default_idx, idx_t z = default_idx)
 	{
@@ -87,6 +208,16 @@ public:
 	const fp& operator()(idx_t y = default_idx, idx_t x = default_idx, idx_t z = default_idx) const
 	{
 		return data()[to_linear_idx_with_checks(y, x, z)];
+	}
+	fp& operator[](idx_t idx)
+	{
+		check_no_overflow(idx, m.dims.total());
+		return data()[idx];
+	}
+	const fp& operator[](idx_t idx) const
+	{
+		check_no_overflow(idx, m.dims.total());
+		return data()[idx];
 	}
 
 private:
@@ -102,7 +233,7 @@ private:
 	static void check_no_overflow(idx_t idx, size_t dim)
 	{
 		if constexpr (DO_DEBUG_CHECKS)
-			xassert(idx >= 0 && (size_t)idx < dim, "tensor::operator(): invalid index: dim = {}, idx = {}", dim, idx);
+			xassert(idx >= 0 && (size_t)idx < dim, "tensor: invalid index {} for dim {}", idx, dim);
 	}
 	void adjust_default_indexes(idx_t& y, idx_t& x, idx_t& z) const
 	{
@@ -122,5 +253,21 @@ private:
 		return true;
 	}
 };
+
+void multiply(const tensor& left, const tensor& right, tensor& out)
+{
+	xassert(left.dims().depth == 1 && right.dims().depth == 1, "3D multiplication not supported");
+	xassert(left.dims().width == right.dims().height, "Tensors incompatible for multiplication");
+
+	const size_t w = right.dims().width;
+	const size_t h = left.dims().height;
+	const size_t l = left.dims().width;
+	out.resize_storage({ h, w, 1 });
+
+	for (size_t y = 0; y < h; ++y)
+		for (size_t k = 0; k < l; ++k)
+			for (size_t x = 0; x < w; ++x)
+				out(y, x) += left(y, k) * right(k, x);
+}
 
 EXPORT_END
