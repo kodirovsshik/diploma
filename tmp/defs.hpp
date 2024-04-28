@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <stacktrace>
 
+
+
 #define lambda(input, val) [](input){ return (val); }
 #define lambdac(input, val) [=](input){ return (val); }
 
@@ -22,13 +24,9 @@
 		while (_getch() != 27); std::exit(-1); \
 	} \
 }()
-#define dassert(cond) xassert(cond, "Debug assertion \"" #cond "\" has failed")
 
 #define wprint(fmt, ...) { fputws(std::format(fmt __VA_OPT__(,) __VA_ARGS__).data(), stdout); }
 
-using cpath = const std::filesystem::path&;
-
-using fp = float;
 
 #pragma warning(disable : 4005)
 #define image_classes_xlist X(0, pneumonia) X(1, other)
@@ -37,5 +35,11 @@ using fp = float;
 #define EXPORT_END }
 
 #define DO_DEBUG_CHECKS 1
+
+#if DO_DEBUG_CHECKS
+#define dassert(cond) xassert(cond, "Debug assertion \"" #cond "\" has failed")
+#else
+#define dassert(cond) ((void)0)
+#endif
 
 #define xinvoke(fn, args, ...) std::invoke(std::forward<decltype(fn)>(fn), std::forward<decltype(args)>(args)... __VA_OPT__(,) __VA_ARGS__)

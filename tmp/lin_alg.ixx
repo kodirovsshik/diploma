@@ -10,6 +10,7 @@ module;
 
 export module diploma.lin_alg;
 import diploma.utility;
+import diploma.thread_pool;
 
 
 EXPORT_BEGIN
@@ -50,8 +51,6 @@ struct tensor_dims
 
 class tensor
 {
-	using idx_t = std::ptrdiff_t;
-
 	struct M
 	{
 #if _KSN_IS_DEBUG_BUILD
@@ -174,7 +173,7 @@ public:
 	void resize_clear_storage(tensor_dims dims)
 	{
 		resize_storage(dims);
-		zero_out(); //TODO optimize - conditional calling
+		zero_out();
 	}
 	void zero_out()
 	{
@@ -194,7 +193,7 @@ public:
 	auto dims() const noexcept { return m.dims; }
 
 	auto data() noexcept { return m.data.get(); }
-	auto data() const noexcept { return m.data.get(); }
+	auto data() const noexcept { return (const fp*)m.data.get(); }
 
 	auto begin() { return data(); }
 	auto begin() const { return data(); }
@@ -254,6 +253,11 @@ private:
 	}
 };
 
+void multiply(tensor& left, fp scalar)
+{
+	for (auto& x : left)
+		x *= scalar;
+}
 void multiply(const tensor& left, const tensor& right, tensor& out)
 {
 	xassert(left.dims().depth == 1 && right.dims().depth == 1, "3D multiplication not supported");
@@ -268,6 +272,26 @@ void multiply(const tensor& left, const tensor& right, tensor& out)
 		for (size_t k = 0; k < l; ++k)
 			for (size_t x = 0; x < w; ++x)
 				out(y, x) += left(y, k) * right(k, x);
+}
+
+void add(tensor& left, const tensor& right)
+{
+	xassert(left.dims() == right.dims(), "incompatible tensors");
+
+	for (size_t i = 0; i < left.size(); ++i)
+		left[i] += right[i];
+}
+
+void add(tensor& left, const tensor& right, fp scale, thread_pool& pool)
+{
+	xassert(left.dims() == right.dims(), "incompatible tensors");
+
+	auto worker = [&] (size_t, size_t i) {
+		left[i] += right[i] * scale;
+	};
+	for (size_t i = 0; i < left.dims().total(); ++i)
+		pool.schedule_sized_work(0, left.dims().total(), worker);
+
 }
 
 EXPORT_END

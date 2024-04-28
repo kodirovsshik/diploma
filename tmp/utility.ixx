@@ -15,13 +15,22 @@ module;
 
 export module diploma.utility;
 
+
 EXPORT_BEGIN
 
-thread_local std::mt19937_64 thread_rng(0);
+using fp = float;
+
+using cpath = const std::filesystem::path&;
+using idx_t = std::ptrdiff_t;
+
+constexpr size_t rng_seed = 1;
+
 
 template<class T, class R>
 void randomize_range(R&& range, T from, T to)
 {
+	static thread_local std::mt19937_64 thread_rng(rng_seed);
+
 	std::uniform_real_distribution<T> distr(from, to);
 	for (auto&& x : range)
 		x = distr(thread_rng);
@@ -94,6 +103,7 @@ size_t get_max_idx(const R& range)
 	const auto max_enumerated_pair = std::ranges::max(enumerated_range, {}, enumerated_range_to_value);
 	return (size_t)std::get<0>(max_enumerated_pair);
 }
+
 
 EXPORT_END
 

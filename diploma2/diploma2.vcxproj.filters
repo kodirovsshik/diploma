@@ -19,6 +19,9 @@
     <Filter Include="Module Files">
       <UniqueIdentifier>{a5e37ac0-5f16-4ea4-9144-49281a716dcc}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Module Files %28external%29">
+      <UniqueIdentifier>{ce82ea77-5db8-4517-a81b-331b35670a5c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -30,20 +33,23 @@
     <ClCompile Include="..\tmp\crc.ixx">
       <Filter>Module Files %28inherited%29</Filter>
     </ClCompile>
-    <ClCompile Include="..\tmp\lin_alg.ixx">
-      <Filter>Module Files %28inherited%29</Filter>
-    </ClCompile>
     <ClCompile Include="..\tmp\serialization.ixx">
       <Filter>Module Files %28inherited%29</Filter>
     </ClCompile>
     <ClCompile Include="..\tmp\thread_pool.ixx">
       <Filter>Module Files %28inherited%29</Filter>
     </ClCompile>
-    <ClCompile Include="..\tmp\utility.ixx">
-      <Filter>Module Files %28inherited%29</Filter>
-    </ClCompile>
     <ClCompile Include="nn.ixx">
       <Filter>Module Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tmp\lin_alg.ixx">
+      <Filter>Module Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tmp\utility.ixx">
+      <Filter>Module Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_type_traits.ixx">
+      <Filter>Module Files %28external%29</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

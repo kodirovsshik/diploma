@@ -151,6 +151,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_type_traits.ixx" />
     <ClCompile Include="..\tmp\bmp.ixx" />
     <ClCompile Include="..\tmp\crc.ixx" />
     <ClCompile Include="..\tmp\lin_alg.ixx" />

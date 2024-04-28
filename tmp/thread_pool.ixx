@@ -18,7 +18,7 @@ export module diploma.thread_pool;
 template<class F, class Tuple, class... Args, std::size_t... I>
 constexpr decltype(auto) apply_extra_impl(F&& f, Tuple&& t, std::index_sequence<I...>, Args&& ...args)
 {
-	return std::invoke(std::forward<F>(f), std::forward<Args>(args)..., std::get<I>(std::forward<Tuple>(t))...);
+	return std::invoke(std::forward<F>(f), std::get<I>(std::forward<Tuple>(t))..., std::forward<Args>(args)...);
 }
 template<class F, class Tuple, class... Args>
 constexpr decltype(auto) apply_extra(F&& f, Tuple&& t, Args&& ...args)
@@ -154,11 +154,11 @@ public:
 		const uint64_t leftover_size = size % n;
 
 		uint64_t current_offset = begin;
-		for (size_t i = 0; i < this->threads.size(); ++i)
+		for (size_t thread_id = 0; thread_id < this->threads.size(); ++thread_id)
 		{
-			const uint64_t current_size = split_size + bool(i < leftover_size);
+			const uint64_t current_size = split_size + bool(thread_id < leftover_size);
 			const uint64_t current_end = current_offset + current_size;
-			this->schedule_ranged_task(current_offset, current_end, std::forward<F>(func), i, std::forward<Ts>(args_)...);
+			this->schedule_ranged_task(current_offset, current_end, std::forward<F>(func), std::forward<Ts>(args_)..., thread_id);
 			current_offset = current_end;
 		}
 	}
