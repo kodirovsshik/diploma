@@ -220,11 +220,6 @@ class convolution_layer
 	size_t kernel_height, kernel_width;
 	size_t out_images;
 
-	void feed_forward(const tensor& in, tensor& out) const
-	{
-		perform_full_convolution(in, data, out);
-	}
-
 	tensor_dims init(tensor_dims input_dims)
 	{
 		xassert(kernel_width && kernel_height, "Convolution kernels must be non-zero in size");
@@ -235,6 +230,19 @@ class convolution_layer
 		randomize_range(data, -rng_range, rng_range);
 
 		return { input_dims.height - kernel_height + 1, input_dims.width - kernel_width + 1, out_images };
+	}
+
+	void feed_forward(const tensor& in, tensor& out) const
+	{
+		perform_full_convolution(in, data, out);
+	}
+	void feed_back(const tensor& in, const tensor&, const tensor& dLda, tensor& dLda_prev) const
+	{
+
+	}
+	void accumulate_gradient(const tensor& input, const tensor& dLdoutput, tensor& dLdparams) const
+	{
+		perform_full_convolution(input, dLdoutput, dLdparams);
 	}
 
 public:
