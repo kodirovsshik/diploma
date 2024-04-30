@@ -61,11 +61,17 @@ T safe_mul(T a, T b)
 			return 0;
 
 		const auto max = std::numeric_limits<T>::max();
+		const auto min = std::numeric_limits<T>::min();
 
+		//TODO: fix
+		bool ok = true;
+		
 		if (max / b < a)
-			throw;
+			ok = false;
 		else if (max / b == a && max % b != 0)
-			throw;
+			ok = false;
+
+		xassert(ok, "overflow: multiplying {} by {}", a, b);
 	}
 	return a * b;
 }
@@ -75,9 +81,15 @@ T safe_add(T a, T b)
 	if constexpr (DO_DEBUG_CHECKS)
 	{
 		const auto max = std::numeric_limits<T>::max();
+		const auto min = std::numeric_limits<T>::min();
+
+		//TODO: fix
+		bool ok = true;
 
 		if (a > max - b)
-			throw;
+			ok = false;
+
+		xassert(ok, "overflow: adding {} and {}", a, b);
 	}
 	return a + b;
 }

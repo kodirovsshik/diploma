@@ -456,7 +456,7 @@ class model
 	static constexpr bool has_tensor_data_member =
 		requires(LayerType layer) { { layer.data } -> ksn::same_to_cvref<tensor>; };
 
-	static tensor_dims get_layer_parameter_count(const layer_holder_t& layer)
+	static tensor_dims get_raw_layer_parameter_count(const layer_holder_t& layer)
 	{
 		auto visiter = [](const auto& obj) -> tensor_dims
 		{
@@ -467,9 +467,10 @@ class model
 		};
 		return std::visit(visiter, layer);
 	}
+
 	static void adjust_layer_parameters(layer_holder_t& layer, const tensor& adjustment, fp scale, thread_pool& pool)
 	{
-		dassert(get_layer_parameter_count(layer) == adjustment.dims());
+		dassert(get_raw_layer_parameter_count(layer) == adjustment.dims());
 
 		auto visiter = [&](auto& obj)
 		{
@@ -513,44 +514,69 @@ public:
 		return in;
 	}
 
-	auto _create_layer_adjustment_vector()
+	size_t get_layer_count() const noexcept
 	{
-		std::vector<tensor> dLdparams(m.layers.size());
-		for (size_t i = 0; i < m.layers.size(); ++i)
-			dLdparams[i].resize_clear_storage(get_layer_parameter_count(m.layers[i]));
-
-		return dLdparams;
+		return m.layers.size();
+	}
+	size_t get_layer_parameter_count(size_t i) const noexcept
+	{
+		xassert(i < get_layer_count(), "Invalid layer index");
+		return get_raw_layer_parameter_count(m.layers[i]).total();
+	}
+	size_t get_total_parameter_count() const noexcept
+	{
+		size_t result = 0;
+		for (const auto& l : m.layers)
+			result += get_raw_layer_parameter_count(l).total();
+		return result;
 	}
 
 	template<class Dataset>
 	void fit(const Dataset& dataset, thread_pool& pool)
 	{
-		size_t total_parameter_count = 0;
-		for (const auto& l : m.layers)
-			total_parameter_count += get_layer_parameter_count(l).total();
+		assert_is_finished();
 
-		struct thread_state
-		{
-			std::vector<tensor> dLdparams;
+		struct thread_state { std::vector<tensor> dLdparams; };
+		std::vector<thread_state> states(pool.size(), thread_state{ _create_layer_adjustment_vector() });
+
+		//TODO: test new thread_pool API vs old one
+		auto worker = [&](size_t thread_id, size_t begin, size_t end) {
+			for (size_t i = begin; i < end; ++i)
+			{
+				const auto& [input, expected] = dataset[i];
+				accumulate_gradient_single(input, expected, states[thread_id].dLdparams);
+			}
 		};
-
-		std::vector<thread_state> states(pool.size());
-		for (auto& state : states)
-			state.dLdparams = _create_layer_adjustment_vector();
-
-		auto worker = [&](size_t thread_id, size_t job_id) {
-			const auto& [input, expected] = dataset[job_id];
-			accumulate_gradient_single(input, expected, states[thread_id].dLdparams);
-		};
-		pool.schedule_sized_work(0, dataset.size(), worker);
+		pool.schedule_split_work(0, dataset.size(), worker);
 		pool.barrier();
+
+		const fp scale = -0.01f / get_total_parameter_count() / dataset.size();
 
 		for (size_t j = 0; j < states.size(); ++j)
 		{
 			for (size_t i = 0; i < m.layers.size(); ++i)
-				adjust_layer_parameters(m.layers[i], states[j].dLdparams[i], -0.01f / total_parameter_count / dataset.size(), pool);
+				adjust_layer_parameters(m.layers[i], states[j].dLdparams[i], scale, pool);
 			pool.barrier();
 		}
+	}
+
+	fp loss(const tensor& observed, const tensor& expected)
+	{
+		return variant_invoke(m.loss_function, f, observed, expected);
+	}
+	fp loss_contribution(const tensor& input, const tensor& expected)
+	{
+		return loss(predict(input), expected);
+	}
+
+private:
+	auto _create_layer_adjustment_vector()
+	{
+		std::vector<tensor> dLdparams(m.layers.size());
+		for (size_t i = 0; i < m.layers.size(); ++i)
+			dLdparams[i].resize_clear_storage(get_raw_layer_parameter_count(m.layers[i]));
+
+		return dLdparams;
 	}
 
 	void accumulate_gradient_single(tensor in, const tensor& label, std::vector<tensor>& dLdparams)
@@ -575,17 +601,6 @@ public:
 			variant_invoke(m.layers[i], feed_back, activations[i], activations[i + 1], dLdactivations, dLdactivations_prev);
 			std::swap(dLdactivations, dLdactivations_prev);
 		}
-	}
-
-	
-private:
-	fp loss(const tensor& observed, const tensor& expected)
-	{
-		return variant_invoke(m.loss_function, f, observed, expected);
-	}
-	fp loss_contribution(const tensor& input, const tensor& expected)
-	{
-		return loss(predict(input), expected);
 	}
 };
 

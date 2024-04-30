@@ -21,18 +21,17 @@ std::pair<tensor, tensor> gen_data_pair()
 	const fp y = dist(rng);
 
 	const auto in = tensor::from_range({ x, y });
-	const auto label = tensor::from_range({ x + y, x + 2 * y });
+	const auto label = tensor::from_range({ x + y });
 	return { in, label };
 }
 
 class stub_dataset
 {
-	using pair_generator_t = std::function<std::pair<tensor, tensor>()>;
-
 	std::vector<std::pair<tensor, tensor>> dataset;
 
 public:
-	stub_dataset(pair_generator_t generator, size_t size)
+	template<class pair_generator_t>
+	stub_dataset(pair_generator_t&& generator, size_t size)
 	{
 		dataset.reserve(size);
 		while (size --> 0)
@@ -57,6 +56,8 @@ public:
 	}
 };
 
+
+
 int main()
 {
 	thread_pool pool;
@@ -64,37 +65,33 @@ int main()
 	//cpath dataset_root = "C:/dataset_pn0";
 	//dataset_wrapper dataset(dataset_root / "test");
 	
-	stub_dataset dataset(gen_data_pair, 100);
+	stub_dataset dataset(gen_data_pair, 10);
 
 	model m(dataset.input_size());
-	m.add_layer(dense_layer{2});
+	m.add_layer(dense_layer{1});
 	m.finish(sgd_optimizer{ .rate = 0.001f }, mse_loss_function{});
 
 	auto x = tensor::from_range({ 1, 2 });
 	tensor y;
 
+	auto xclock = std::chrono::steady_clock::now;
+
+	size_t i = 0;
+	size_t dt_sum = 0;
 	while (true)
 	{
 		y = m.predict(x);
+		std::println("{}, {:.14f}", i++, m.loss(y, tensor::from_range({3})));
+		if (i == 100)
+			break;
+
+		auto t1 = xclock();
 		m.fit(dataset, pool);
+		auto t2 = xclock();
+
+		auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
+		dt_sum += dt.count();
 	}
-	
 
-	//model m(image.dims());
-	//m.add_layer(dense_layer{2});
-	//m.add_layer(untied_bias_layer{});
-	//m.add_layer(softmax_layer{});
-	//m.finish(sgd_optimizer{ .rate = 0.001f }, cross_entropy_loss_function{});
-
-	//tensor y;
-	//y = m.predict(image);
-	//size_t i = 0;
-	//while (true)
-	//{
-	//	m.accumulate_gradient_single(image, label);
-	//	y = m.predict(image);
-	//	std::print("{}, {}\n", ++i, y[1]);
-	//	if (y[1] > 0.99)
-	//		__debugbreak();
-	//}
+	std::print("{}ms/epoch", dt_sum / 100);
 }

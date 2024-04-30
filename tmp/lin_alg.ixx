@@ -49,11 +49,13 @@ struct tensor_dims
 	//}
 };
 
+#define TENSOR_USE_DATA_SPAN _KSN_IS_DEBUG_BUILD
+
 class tensor
 {
 	struct M
 	{
-#if _KSN_IS_DEBUG_BUILD
+#if TENSOR_USE_DATA_SPAN
 		std::span<fp> data_span;
 #endif
 
@@ -66,7 +68,7 @@ class tensor
 			data = std::make_unique<fp[]>(dims.total());
 			capacity = dims.total();
 			this->dims = dims;
-#if _KSN_IS_DEBUG_BUILD
+#if TENSOR_USE_DATA_SPAN
 			data_span = { data.get(), dims.total() };
 #endif
 		}
@@ -281,17 +283,15 @@ void add(tensor& left, const tensor& right)
 	for (size_t i = 0; i < left.size(); ++i)
 		left[i] += right[i];
 }
-
 void add(tensor& left, const tensor& right, fp scale, thread_pool& pool)
 {
 	xassert(left.dims() == right.dims(), "incompatible tensors");
 
-	auto worker = [&] (size_t, size_t i) {
-		left[i] += right[i] * scale;
+	auto worker = [&, scale](size_t thread_id, size_t begin, size_t end) {
+		for (size_t i = begin; i < end; ++i)
+			left[i] += right[i] * scale;
 	};
-	for (size_t i = 0; i < left.dims().total(); ++i)
-		pool.schedule_sized_work(0, left.dims().total(), worker);
-
+	pool.schedule_split_work(0, left.dims().total(), worker);
 }
 
 EXPORT_END

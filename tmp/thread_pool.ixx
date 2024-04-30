@@ -121,7 +121,7 @@ public:
 	template<class F, class... Ts>
 	void schedule_task(F&& func, Ts&& ...args_)
 	{
-		auto caller = [&, args = copy_as_tuple(args_)]
+		auto caller = [func = std::forward<F>(func), args = copy_as_tuple(args_)]
 		() mutable -> void
 			{
 				std::apply(
@@ -130,6 +130,22 @@ public:
 				);
 			};
 		this->insert_task(std::move(caller));
+	}
+	template<class F, class... Ts>
+	void schedule_split_work(size_t begin, size_t size, F&& func, Ts&& ...args_)
+	{
+		const size_t n = this->threads.size();
+		const uint64_t split_size = size / n;
+		const uint64_t leftover_size = size % n;
+
+		uint64_t current_offset = begin;
+		for (size_t thread_id = 0; thread_id < this->threads.size(); ++thread_id)
+		{
+			const uint64_t current_size = split_size + bool(thread_id < leftover_size);
+			const uint64_t current_end = current_offset + current_size;
+			this->schedule_task(std::forward<F>(func), std::forward<Ts>(args_)..., thread_id, current_offset, current_end);
+			current_offset = current_end;
+		}
 	}
 	template<class F, class... Ts>
 	void schedule_ranged_task(uint64_t begin, uint64_t end, F&& func, Ts&& ...args_)
