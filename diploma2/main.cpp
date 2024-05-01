@@ -13,7 +13,17 @@ import diploma.thread_pool;
 
 std::mt19937_64 rng(rng_seed + 1);
 
-std::pair<tensor, tensor> gen_data_pair()
+std::pair<tensor, tensor> gen_data_pair_max1()
+{
+	static thread_local std::uniform_real_distribution<fp> dist(-10, 10);
+
+	const fp x = dist(rng);
+
+	const auto in = tensor::from_range({ x });
+	const auto label = tensor::from_range({ std::max<fp>(x, 1) });
+	return { in, label };
+}
+std::pair<tensor, tensor> gen_data_pair_sum()
 {
 	static thread_local std::uniform_real_distribution<fp> dist(0, 10);
 
@@ -61,37 +71,38 @@ public:
 int main()
 {
 	thread_pool pool;
-
-	//cpath dataset_root = "C:/dataset_pn0";
-	//dataset_wrapper dataset(dataset_root / "test");
 	
-	stub_dataset dataset(gen_data_pair, 10);
+	stub_dataset train_dataset(gen_data_pair_max1, 1000);
+	stub_dataset val_dataset(gen_data_pair_max1, 10);
 
-	model m(dataset.input_size());
-	m.add_layer(dense_layer{1});
-	m.finish(sgd_optimizer{ .rate = 0.001f }, mse_loss_function{});
+	model m(train_dataset.input_size());
+	m.add_layer(convolution_layer(1, 1, 2));
+	m.add_layer(tied_bias_layer{});
+	m.add_layer(flattening_layer{});
+	m.add_layer(pooling_layer{2, 1});
+	m.finish(sgd_optimizer(0.001f), mse_loss_function{});
 
-	auto x = tensor::from_range({ 1, 2 });
-	tensor y;
-
-	auto xclock = std::chrono::steady_clock::now;
+	const auto xclock = std::chrono::steady_clock::now;
 
 	size_t i = 0;
-	size_t dt_sum = 0;
+	decltype(xclock() - xclock()) dt_sum{};
 	while (true)
 	{
-		y = m.predict(x);
-		std::println("{}, {:.14f}", i++, m.loss(y, tensor::from_range({3})));
-		if (i == 100)
+		if ((i % 200) == 0)
+			std::println("{}, {}", i, m.evaluate(val_dataset, pool));
+		if (i == 35000 && false)
 			break;
 
 		auto t1 = xclock();
-		m.fit(dataset, pool);
+		m.fit(train_dataset, pool);
 		auto t2 = xclock();
 
-		auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
-		dt_sum += dt.count();
+		dt_sum += t2 - t1;
+		++i;
 	}
 
-	std::print("{}ms/epoch", dt_sum / 100);
+	std::print("{}/epoch\n{} -> {}\n{} -> {}", dt_sum / (__int64)i, 
+		2, m.predict(tensor::from_range({ 2 }))[0],
+		-2, m.predict(tensor::from_range({ -2 }))[0]
+	);
 }
