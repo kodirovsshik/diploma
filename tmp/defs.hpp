@@ -15,14 +15,15 @@
 
 #define nodestruct static thread_local
 
-#define xassert(cond, fmt, ...) [&]{ auto sc = std::source_location::current(); \
-	if (!(cond)) \
-	{\
-		std::println("\nASSERTION FAILED in {}:{}:", sc.file_name(), sc.line()); \
-		std::println(fmt __VA_OPT__(,) __VA_ARGS__); \
-		std::println("STACK TRACE:\n{}", std::stacktrace::current()); \
-		while (_getch() != 27); std::exit(-1); \
-	} \
+#define xassert(cond, fmt, ...) [&]{ auto sc = std::source_location::current();	\
+	if (!(cond))																									\
+	{																												\
+		std::println("\nASSERTION FAILED in {}:{}:", sc.file_name(), sc.line());	\
+		std::println(fmt __VA_OPT__(,) __VA_ARGS__);										\
+		std::println("STACK TRACE:\n{}", std::stacktrace::current());					\
+		__debugbreak();																					\
+		while (_getch() != 27); std::exit(-1);														\
+	}																												\
 }()
 
 #define wprint(fmt, ...) { fputws(std::format(fmt __VA_OPT__(,) __VA_ARGS__).data(), stdout); }
@@ -34,7 +35,7 @@
 #define EXPORT_BEGIN export{
 #define EXPORT_END }
 
-#define DO_DEBUG_CHECKS 1
+#define DO_DEBUG_CHECKS 0
 
 #if DO_DEBUG_CHECKS
 #define dassert(cond) xassert(cond, "Debug assertion \"" #cond "\" has failed")

@@ -27,9 +27,6 @@
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\tmp\bmp.ixx">
-      <Filter>Module Files %28inherited%29</Filter>
-    </ClCompile>
     <ClCompile Include="..\tmp\crc.ixx">
       <Filter>Module Files %28inherited%29</Filter>
     </ClCompile>
@@ -50,6 +47,15 @@
     </ClCompile>
     <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_type_traits.ixx">
       <Filter>Module Files %28external%29</Filter>
+    </ClCompile>
+    <ClCompile Include="data_generator.ixx">
+      <Filter>Module Files</Filter>
+    </ClCompile>
+    <ClCompile Include="dataset.ixx">
+      <Filter>Module Files</Filter>
+    </ClCompile>
+    <ClCompile Include="image.ixx">
+      <Filter>Module Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

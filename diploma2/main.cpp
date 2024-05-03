@@ -7,102 +7,129 @@
 import diploma.nn;
 import diploma.lin_alg;
 import diploma.utility;
-import diploma.bmp;
+import diploma.image;
 import diploma.thread_pool;
-
-
-std::mt19937_64 rng(rng_seed + 1);
-
-std::pair<tensor, tensor> gen_data_pair_max1()
-{
-	static thread_local std::uniform_real_distribution<fp> dist(-10, 10);
-
-	const fp x = dist(rng);
-
-	const auto in = tensor::from_range({ x });
-	const auto label = tensor::from_range({ std::max<fp>(x, 1) });
-	return { in, label };
-}
-std::pair<tensor, tensor> gen_data_pair_sum()
-{
-	static thread_local std::uniform_real_distribution<fp> dist(0, 10);
-
-	const fp x = dist(rng);
-	const fp y = dist(rng);
-
-	const auto in = tensor::from_range({ x, y });
-	const auto label = tensor::from_range({ x + y });
-	return { in, label };
-}
-
-class stub_dataset
-{
-	std::vector<std::pair<tensor, tensor>> dataset;
-
-public:
-	template<class pair_generator_t>
-	stub_dataset(pair_generator_t&& generator, size_t size)
-	{
-		dataset.reserve(size);
-		while (size --> 0)
-			dataset.emplace_back(generator());
-	}
-
-	void shuffle() noexcept {}
-
-	const auto& operator[](size_t i) const
-	{
-		return dataset[i];
-	}
-
-	tensor_dims input_size() const
-	{
-		return dataset[0].first.dims();
-	}
-
-	size_t size() const noexcept
-	{
-		return dataset.size();
-	}
-};
+import diploma.dataset;
+import diploma.data_generator;
 
 
 
 int main()
 {
+	datagen_rng.discard(65536);
+
+
+	//cpath p = "D:/a.qoi";
+
+	//image img;
+	//auto& image = img.data;
+
+	//while (true)
+	//{
+	//	//image = gen_circle_image_tensor();
+	//	image = gen_square_image_tensor();
+	//	img.write_qoi(p, { .colors = threestate::yes });
+	//	system(("start " + p.generic_string()).data());
+	//	_getch();
+	//}
+
 	thread_pool pool;
 	
-	stub_dataset train_dataset(gen_data_pair_max1, 1000);
-	stub_dataset val_dataset(gen_data_pair_max1, 10);
+	auto datagen_func = gen_data_pair_circle_square;
+	stub_dataset train_dataset(datagen_func, 150);
+	stub_dataset val_dataset(datagen_func, 50);
 
-	model m(train_dataset.input_size());
-	m.add_layer(convolution_layer(1, 1, 2));
+	model m(input_size(train_dataset));
+
+	m.add_layer(convolution_layer(5, 5, 3));
+	m.add_layer(pooling_layer{2, 2});
 	m.add_layer(tied_bias_layer{});
+	m.add_layer(leaky_relu_layer{});
+
+	m.add_layer(convolution_layer(5, 5, 5));
+	m.add_layer(pooling_layer{2, 2});
+	m.add_layer(tied_bias_layer{});
+	m.add_layer(leaky_relu_layer{});
+
+	//m.add_layer(convolution_layer(5, 5, 30));
+	//m.add_layer(pooling_layer{2, 2});
+	//m.add_layer(tied_bias_layer{});
+	//m.add_layer(leaky_relu_layer{});
+
 	m.add_layer(flattening_layer{});
-	m.add_layer(pooling_layer{2, 1});
-	m.finish(sgd_optimizer(0.001f), mse_loss_function{});
+
+	//m.add_layer(dense_layer{16});
+	//m.add_layer(leaky_relu_layer{});
+
+	m.add_layer(dense_layer{4});
+	m.add_layer(leaky_relu_layer{});
+
+	m.add_layer(dense_layer{2});
+	m.add_layer(softmax_layer{});
+
+	m.finish(cross_entropy_loss_function{});
 
 	const auto xclock = std::chrono::steady_clock::now;
 
-	size_t i = 0;
+	const size_t max_batch_size = size(train_dataset);
+	const size_t small_batch_size = 20;
+	size_t i = 0, batch_size = max_batch_size;
 	decltype(xclock() - xclock()) dt_sum{};
+
+	fp last_train_acc = 0, last_train_loss = 0;
+
+	const fp learning_rate_decay_rate = 1.1f;
+	int learning_rate_decay = 0;
+	const fp learning_rate_base = 0.008f;
+	auto learning_rate = [&] { return learning_rate_base * powf(learning_rate_decay_rate, -(fp)learning_rate_decay); };
+
+	std::println("epoch, train_loss, train_acc, val_loss, val_acc");
 	while (true)
 	{
-		if ((i % 200) == 0)
-			std::println("{}, {}", i, m.evaluate(val_dataset, pool));
-		if (i == 35000 && false)
+		if ((i % 1) == 0)
+		{
+			auto stats = m.evaluate(val_dataset, pool);
+			std::println("{:6}, {:<10}, {:<10}, {:<10}, {:<10}", i, last_train_loss, last_train_acc, stats.loss, stats.accuracy);
+		}
+
+		bool exit = false;
+
+		if (_kbhit()) switch (_getch())
+		{
+		case 27: exit = true; break;
+		case '*': batch_size = max_batch_size; break;
+		case '/': batch_size = small_batch_size; break;
+
+		case '+':
+			std::print("learning_rate: {} -> ", learning_rate());
+			learning_rate_decay--;
+			std::print("{}\n", learning_rate());
 			break;
 
+		case '-':
+			std::print("learning_rate: {} -> ", learning_rate());
+			learning_rate_decay++;
+			std::print("{}\n", learning_rate());
+			break;
+
+		case ' ': __debugbreak();
+		default: break;
+		}
+		if (exit) break;
+
 		auto t1 = xclock();
-		m.fit(train_dataset, pool);
+		auto stats = m.fit(train_dataset, pool, learning_rate(), batch_size);
 		auto t2 = xclock();
+
+		last_train_acc = stats.accuracy;
+		last_train_loss = stats.loss;
 
 		dt_sum += t2 - t1;
 		++i;
 	}
 
-	std::print("{}/epoch\n{} -> {}\n{} -> {}", dt_sum / (__int64)i, 
-		2, m.predict(tensor::from_range({ 2 }))[0],
-		-2, m.predict(tensor::from_range({ -2 }))[0]
-	);
+	//std::print("{}/epoch\n{} -> {}\n{} -> {}", dt_sum / (__int64)i, 
+	//	2, m.predict(tensor::from_range({ 2 }))[0],
+	//	-2, m.predict(tensor::from_range({ -2 }))[0]
+	//);
 }

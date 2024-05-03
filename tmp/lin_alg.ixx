@@ -224,17 +224,19 @@ public:
 private:
 	idx_t to_linear_idx_with_checks(idx_t y, idx_t x, idx_t z) const
 	{
-		adjust_default_indexes(y, x, z);
-		check_no_overflow(x, dims().width);
-		check_no_overflow(y, dims().height);
-		check_no_overflow(z, dims().depth);
+		if constexpr (DO_DEBUG_CHECKS)
+		{
+			adjust_default_indexes(y, x, z);
+			check_no_overflow(x, dims().width);
+			check_no_overflow(y, dims().height);
+			check_no_overflow(z, dims().depth);
+		}
 		return dims().to_linear_idx(y, x, z);
 	}
 
 	static void check_no_overflow(idx_t idx, size_t dim)
 	{
-		if constexpr (DO_DEBUG_CHECKS)
-			xassert(idx >= 0 && (size_t)idx < dim, "tensor: invalid index {} for dim {}", idx, dim);
+		xassert(idx >= 0 && (size_t)idx < dim, "tensor: invalid index {} for dim {}", idx, dim);
 	}
 	void adjust_default_indexes(idx_t& y, idx_t& x, idx_t& z) const
 	{

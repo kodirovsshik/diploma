@@ -82,6 +82,7 @@
       <UseStandardPreprocessor>true</UseStandardPreprocessor>
       <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
       <BuildStlModules>true</BuildStlModules>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -104,6 +105,9 @@
       <BuildStlModules>true</BuildStlModules>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <FloatingPointModel>Fast</FloatingPointModel>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -124,6 +128,7 @@
       <UseStandardPreprocessor>true</UseStandardPreprocessor>
       <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
       <BuildStlModules>true</BuildStlModules>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -146,6 +151,9 @@
       <BuildStlModules>true</BuildStlModules>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <FloatingPointModel>Fast</FloatingPointModel>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -156,12 +164,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\libksn_modular\ksn\modules\libksn_type_traits.ixx" />
-    <ClCompile Include="..\tmp\bmp.ixx" />
     <ClCompile Include="..\tmp\crc.ixx" />
     <ClCompile Include="..\tmp\lin_alg.ixx" />
     <ClCompile Include="..\tmp\serialization.ixx" />
     <ClCompile Include="..\tmp\thread_pool.ixx" />
     <ClCompile Include="..\tmp\utility.ixx" />
+    <ClCompile Include="dataset.ixx" />
+    <ClCompile Include="data_generator.ixx" />
+    <ClCompile Include="image.ixx" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="nn.ixx" />
   </ItemGroup>

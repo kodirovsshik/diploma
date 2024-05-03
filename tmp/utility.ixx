@@ -23,7 +23,8 @@ using fp = float;
 using cpath = const std::filesystem::path&;
 using idx_t = std::ptrdiff_t;
 
-constexpr size_t rng_seed = 1;
+constexpr size_t rng_seed_index = 0;
+const size_t rng_seed = std::hash<size_t>{}(rng_seed_index);
 
 
 template<class T, class R>

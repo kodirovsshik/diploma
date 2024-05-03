@@ -1,20 +1,19 @@
 
-module;
-
-#include <variant>
-#include <memory>
-#include <filesystem>
-#include <unordered_map>
-
-#include <defs.hpp>
-
 export module diploma.nn;
 import diploma.lin_alg;
 import diploma.utility;
 import diploma.thread_pool;
-import diploma.bmp;
+import diploma.image;
+import diploma.dataset;
 
 import libksn.type_traits;
+
+import <variant>;
+import <memory>;
+import <filesystem>;
+import <unordered_map>;
+
+import <defs.hpp>;
 
 
 
@@ -28,17 +27,17 @@ size_t calculate_convolution_output_dim(size_t in, size_t kernel)
 	else
 		return in - kernel + 1;
 }
-template<bool is_for_feed_back>
+template<bool is_for_feed_back, bool as_product>
 tensor_dims calculate_convolution_output_dims(tensor_dims in, tensor_dims kernel)
 {
 	return {
 		calculate_convolution_output_dim<is_for_feed_back>(in.width, kernel.width),
 		calculate_convolution_output_dim<is_for_feed_back>(in.height, kernel.height),
-		safe_div(kernel.depth, in.depth)
+		as_product ? kernel.depth * in.depth : safe_div(kernel.depth, in.depth)
 	};
 }
 
-export template<bool is_for_feed_back = false>
+export template<bool is_for_feed_back = false, bool as_product = false>
 void perform_full_convolution(const tensor& input, const tensor& kernels, tensor& output)
 {
 	constexpr static bool is_for_feed_forward = !is_for_feed_back;
@@ -46,7 +45,7 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 	const auto [kernel_height, kernel_width, kernel_count] = kernels.dims();
 	const auto [input_height, input_width, input_images_count] = input.dims();
 	const auto [out_width, out_height, out_images_count] =
-		calculate_convolution_output_dims<is_for_feed_back>(input.dims(), kernels.dims());
+		calculate_convolution_output_dims<is_for_feed_back, as_product>(input.dims(), kernels.dims());
 
 	const size_t kernel_x_offset = is_for_feed_forward ? 0 : kernel_width - 1;
 	const size_t kernel_y_offset = is_for_feed_forward ? 0 : kernel_height - 1;
@@ -66,32 +65,58 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 
 	output.resize_clear_storage({ out_height, out_width, out_images_count });
 
-	for (size_t out_image = 0; out_image < out_images_count; ++out_image)
-		for (size_t in_image = 0; in_image < input_images_count; ++in_image)
+	auto do_kernel = [&](size_t out_image, size_t in_image, size_t kernel_id)
+	{
+		auto do_output_element = [&](size_t y, size_t x) {
+			const size_t n_begin = is_for_feed_forward ? 0 : std::max(kernel_x_offset, x) - x;
+			const size_t m_begin = is_for_feed_forward ? 0 : std::max(kernel_y_offset, y) - y;
+			const size_t n_end = is_for_feed_forward ? kernel_width : std::min(kernel_width, input_width + kernel_x_offset - x);
+			const size_t m_end = is_for_feed_forward ? kernel_height : std::min(kernel_height, input_height + kernel_y_offset - y);
+
+			fp val = 0;
+			for (size_t m = m_begin; m < m_end; ++m)
+				for (size_t n = n_begin; n < n_end; ++n)
+				{
+					const size_t in_y = y + m - kernel_y_offset;
+					const size_t in_x = x + n - kernel_x_offset;
+					val += input(in_y, in_x, in_image) * kernel_at(m, n, kernel_id);
+				}
+
+			output(y, x, out_image) += val;
+		};
+
+		for (size_t y = 0; y < out_height; ++y)
+			for (size_t x = 0; x < out_width; ++x)
+				do_output_element(y, x);
+	};
+
+	if constexpr (as_product)
+	{
+		size_t in_image = 0, kernel_id = 0;
+		for (size_t out_image = 0; out_image < out_images_count; ++out_image)
 		{
-			const size_t kernel_id = out_image * input_images_count + in_image;
-
-			auto do_output_element = [&](size_t y, size_t x) {
-				const size_t n_begin = is_for_feed_forward ? 0 : std::max(kernel_x_offset, x) - x;
-				const size_t m_begin = is_for_feed_forward ? 0 : std::max(kernel_y_offset, y) - y;
-				const size_t n_end = is_for_feed_forward ? kernel_width : std::min(kernel_width, input_width + kernel_x_offset - x);
-				const size_t m_end = is_for_feed_forward ? kernel_height : std::min(kernel_height, input_height + kernel_y_offset - y);
-
-				fp val = 0;
-				for (size_t m = m_begin; m < m_end; ++m)
-					for (size_t n = n_begin; n < n_end; ++n)
-						val += input(y + m - kernel_y_offset, x + n - kernel_x_offset, in_image) * kernel_at(m, n, kernel_id);
-
-				output(y, x, out_image) += val;
-			};
-
-			for (size_t y = 0; y < out_height; ++y)
-				for (size_t x = 0; x < out_width; ++x)
-					do_output_element(y, x);
+			do_kernel(out_image, in_image, kernel_id);
+			if (++in_image == input_images_count)
+			{
+				in_image = 0;
+				++kernel_id;
+			}
 		}
+	}
+	else
+	{
+		for (size_t out_image = 0; out_image < out_images_count; ++out_image)
+			for (size_t in_image = 0; in_image < input_images_count; ++in_image)
+			{
+				const size_t kernel_id = out_image * input_images_count + in_image;
+				do_kernel(out_image, in_image, kernel_id);
+			}
+	}
 }
 
 
+
+constexpr fp rng_range = (fp)0.5;
 
 EXPORT_BEGIN
 
@@ -148,13 +173,28 @@ class softmax_layer
 	void feed_forward(tensor& in, tensor& out) const
 	{
 		fp normalizer = 0;
+		fp max_v = -INFINITY;
+		size_t max_idx = 0;
 		for (size_t i = 0; i < in.size(); ++i)
 		{
+			if (in[i] > max_v)
+			{
+				max_v = in[i];
+				max_idx = i;
+			}
 			in[i] = exp(in[i]);
 			normalizer += in[i];
 		}
-		for (auto& x : in)
-			x /= normalizer;
+		if (normalizer != INFINITY)
+		{
+			for (auto& x : in)
+				x /= normalizer;
+		}
+		else
+		{
+			for (auto& x : in) x = 0;
+			in[max_idx] = 1;
+		}
 		std::swap(in, out);
 	}
 	void feed_back(const tensor&, const tensor& out, tensor& dLda, tensor& dLda_prev) const
@@ -188,8 +228,6 @@ class dense_layer
 		xassert(output_height != 0, "Dense layer output size must not be 0");
 		xassert(input_dims.width == 1 && input_dims.depth == 1, "Dense layer takes Nx1x1 tensor as input");
 
-		constexpr fp rng_range = (fp)2;
-
 		data.resize_storage({ output_height, input_dims.height, 1 });
 		randomize_range<fp>(data, -rng_range, rng_range);
 		return { output_height, 1, 1 };
@@ -208,6 +246,7 @@ class dense_layer
 	}
 	void accumulate_gradient(const tensor& input, const tensor& dLdoutput, tensor& dLdparams) const
 	{
+		dLdparams.resize_storage(data.dims());
 		for (size_t i = 0; i < data.dims().height; ++i)
 			for (size_t j = 0; j < data.dims().width; ++j)
 				dLdparams(i, j) += dLdoutput[i] * input[j];
@@ -226,8 +265,6 @@ class untied_bias_layer
 
 	tensor_dims init(tensor_dims input_dims)
 	{
-		constexpr fp rng_range = (fp)2;
-
 		data.resize_storage(input_dims);
 		randomize_range(data, -rng_range, rng_range);
 
@@ -266,7 +303,6 @@ class convolution_layer
 		xassert(kernel_width && kernel_height, "Convolution kernels must be non-zero in size");
 		xassert(input_dims.width >= kernel_width && input_dims.height >= kernel_height, "Convolution kernels must not exceed the input in dimensions");
 
-		constexpr fp rng_range = (fp)2;
 		data.resize_storage({ kernel_height, kernel_width, input_dims.depth * out_images });
 		randomize_range(data, -rng_range, rng_range);
 
@@ -283,7 +319,7 @@ class convolution_layer
 	}
 	void accumulate_gradient(const tensor& input, const tensor& dLdoutput, tensor& dLdparams) const
 	{
-		perform_full_convolution(input, dLdoutput, dLdparams);
+		perform_full_convolution<false, true>(input, dLdoutput, dLdparams);
 	}
 
 public:
@@ -299,8 +335,6 @@ class tied_bias_layer
 
 	tensor_dims init(tensor_dims input_dims)
 	{
-		constexpr fp rng_range = (fp)2;
-
 		data.resize_storage(input_dims.depth);
 		randomize_range(data, -rng_range, rng_range);
 
@@ -463,12 +497,16 @@ public:
 
 class cross_entropy_loss_function
 {
+	static constexpr fp epsilon = 1e-5f;
+
 	static void f_update_helper(fp& accumulator, fp expected, fp observed)
 	{
 		using std::log;
 
 		if (expected == 0)
 			return;
+		if (observed == 0)
+			observed += epsilon;
 
 		accumulator -= expected * log(observed);
 	}
@@ -479,7 +517,11 @@ class cross_entropy_loss_function
 		if (expected == 0)
 			accumulator = 0;
 		else
+		{
+			if (observed == 0)
+				observed += epsilon;
 			accumulator = expected / observed;
+		}
 	}
 public:
 	fp f(const tensor& observed, const tensor& expected)
@@ -515,12 +557,18 @@ public:
 
 class sgd_optimizer
 {
+	friend class model;
+
 	fp rate;
-	size_t batch_size = SIZE_MAX;
+
+	fp get_learning_rate() const
+	{
+		return rate;
+	}
 
 public:
-	sgd_optimizer(fp learning_rate, size_t max_batch_size = SIZE_MAX)
-		: rate(learning_rate), batch_size(max_batch_size) {}
+	sgd_optimizer(fp learning_rate)
+		: rate(learning_rate) {}
 };
 
 
@@ -531,7 +579,6 @@ public:
 class model
 {
 	using layer_holder_t = std::variant<dense_layer, untied_bias_layer, convolution_layer, pooling_layer, tied_bias_layer, leaky_relu_layer, softmax_layer, flattening_layer>;
-	using optimizer_holder_t = std::optional<std::variant<sgd_optimizer>>;
 	using loss_function_holder_t = std::optional<std::variant<mse_loss_function, cross_entropy_loss_function>>;
 
 #define variant_invoke(variant, method, ...) std::visit([&](auto&& stored_obj) { return stored_obj.method(__VA_ARGS__); }, variant)
@@ -539,21 +586,18 @@ class model
 	struct M
 	{
 		std::vector<layer_holder_t> layers;
-		optimizer_holder_t optimizer;
 		loss_function_holder_t loss_function;
 		tensor_dims input_dims;
 		tensor_dims output_dims;
 	} m;
 
-	friend class model_builder;
-
-	bool has_optimizer() const
+	bool has_loss_function() const
 	{
-		return m.optimizer.has_value();
+		return m.loss_function.has_value();
 	}
 	bool is_finished() const
 	{
-		return this->has_optimizer();
+		return this->has_loss_function();
 	}
 	void assert_is_finished(bool is = true) const
 	{
@@ -600,12 +644,11 @@ public:
 		m.layers.push_back(std::move(layer));
 	}
 
-	void finish(optimizer_holder_t optimizer, loss_function_holder_t loss_function)
+	void finish(loss_function_holder_t loss_function)
 	{
 		assert_is_finished(false);
 		xassert(m.layers.size() != 0, "model::finish: model must have at least one layer");
 
-		m.optimizer = optimizer;
 		m.loss_function = loss_function;
 	}
 
@@ -640,28 +683,53 @@ public:
 		return result;
 	}
 
-	template<class Dataset>
-	void fit(const Dataset& dataset, thread_pool& pool)
+	struct model_statistics
+	{
+		fp loss;
+		fp accuracy;
+
+	private:
+		friend class model;
+
+		void merge(const model_statistics& other)
+		{
+			loss += other.loss;
+			accuracy += other.accuracy;
+		}
+		void normalize(size_t observations)
+		{
+			loss /= observations;
+			accuracy /= observations;
+		}
+	};
+
+	template<dataset_wrapper Dataset>
+	model_statistics fit(Dataset& dataset, thread_pool& pool, fp learning_rate, size_t batch_size = SIZE_MAX)
 	{
 		assert_is_finished();
 
-		struct thread_state { std::vector<tensor> dLdparams; };
-		std::vector<thread_state> states(pool.size(), thread_state{ _create_layer_adjustment_vector() });
+		batch_size = std::min(batch_size, size(dataset));
+		shuffle(dataset, batch_size);
+
+		struct thread_state
+		{
+			std::vector<tensor> dLdparams;
+			model_statistics stats{};
+		};
+		std::vector<thread_state> states(pool.size(), { std::vector<tensor>{ m.layers.size() }});
 
 		//TODO: test new thread_pool API vs old one
 		auto worker = [&](size_t thread_id, size_t begin, size_t end) {
 			for (size_t i = begin; i < end; ++i)
 			{
-				const auto& [input, expected] = dataset[i];
-				accumulate_gradient_single(input, expected, states[thread_id].dLdparams);
+				const auto& [input, expected] = at(dataset, i);
+				accumulate_gradient_single(input, expected, states[thread_id].dLdparams, states[thread_id].stats);
 			}
 		};
-		pool.schedule_split_work(0, dataset.size(), worker);
+		pool.schedule_split_work(0, batch_size, worker);
 		pool.barrier();
 
-		//TODO: make use of stored optimizer object
-
-		const fp scale = -0.05f / get_total_parameter_count() / dataset.size();
+		const fp scale = -learning_rate / batch_size;
 
 		for (size_t j = 0; j < states.size(); ++j)
 		{
@@ -670,31 +738,30 @@ public:
 			pool.barrier();
 		}
 
-		//TODO: accumulate metrics along the way
+		return merge_stats(states, batch_size);
 	}
 
-	template<class Dataset>
-	fp evaluate(const Dataset& dataset, thread_pool& pool)
+	template<dataset_wrapper Dataset>
+	model_statistics evaluate(const Dataset& dataset, thread_pool& pool)
 	{
 		assert_is_finished();
 
-		struct thread_state { fp loss{}; };
+		struct thread_state { model_statistics stats{}; };
 		std::vector<thread_state> states(pool.size());
 
 		auto worker = [&](size_t thread_id, size_t begin, size_t end) {
 			for (size_t i = begin; i < end; ++i)
 			{
-				const auto& [input, expected] = dataset[i];
-				states[thread_id].loss += this->loss(this->predict(input), expected);
+				auto& state = states[thread_id];
+				const auto& [input, expected] = at(dataset, i);
+				const auto observed = this->predict(input);
+				update_statistics(state.stats, observed, expected);
 			}
 		};
-		pool.schedule_split_work(0, dataset.size(), worker);
+		pool.schedule_split_work(0, size(dataset), worker);
 		pool.barrier();
 
-		fp sum = 0;
-		for (auto state : states)
-			sum += state.loss;
-		return sum;
+		return merge_stats(states, size(dataset));
 	}
 
 	fp loss(const tensor& observed, const tensor& expected)
@@ -707,16 +774,23 @@ public:
 	}
 
 private:
-	auto _create_layer_adjustment_vector()
+	void update_statistics(model_statistics& stats, const tensor& observed, const tensor& expected)
 	{
-		std::vector<tensor> dLdparams(m.layers.size());
-		for (size_t i = 0; i < m.layers.size(); ++i)
-			dLdparams[i].resize_clear_storage(get_raw_layer_parameter_count(m.layers[i]));
-
-		return dLdparams;
+		stats.loss += this->loss(observed, expected);
+		stats.accuracy += get_max_idx(observed) == get_max_idx(expected);
 	}
 
-	void accumulate_gradient_single(tensor in, const tensor& label, std::vector<tensor>& dLdparams)
+	template<class R>
+	model_statistics merge_stats(const R& states, size_t normalizer)
+	{
+		model_statistics result{};
+		for (auto state : states)
+			result.merge(state.stats);
+		result.normalize(normalizer);
+		return result;
+	}
+
+	void accumulate_gradient_single(tensor in, const tensor& label, std::vector<tensor>& dLdparams, model_statistics& stats)
 	{
 		std::vector<tensor> activations;
 		tensor tmp;
@@ -728,6 +802,8 @@ private:
 		}
 		activations.push_back(std::move(in));
 
+		update_statistics(stats, activations.back(), label);
+
 		tensor dLdactivations, dLdactivations_prev;
 		variant_invoke(m.loss_function.value(), df, activations.back(), label, dLdactivations);
 
@@ -738,84 +814,6 @@ private:
 			variant_invoke(m.layers[i], feed_back, activations[i], activations[i + 1], dLdactivations, dLdactivations_prev);
 			std::swap(dLdactivations, dLdactivations_prev);
 		}
-	}
-};
-
-
-
-class dataset_wrapper
-{
-	struct dataset_pair
-	{
-		tensor input;
-		tensor expected;
-	};
-
-	using nstr = std::filesystem::path::string_type;
-
-	std::vector<dataset_pair> dataset;
-	std::vector<nstr> class_labels;
-
-	void read_labels(cpath root)
-	{
-		for (const auto& entry : std::filesystem::directory_iterator(root))
-		{
-			xassert(entry.is_directory(), "dataset root must contain folders with labels as names");
-			class_labels.push_back(entry.path().filename().native());
-		}
-	}
-	void read_directory(cpath dir, const tensor& expected)
-	{
-		bmp_image image;
-		for (const auto& entry : std::filesystem::directory_iterator(dir))
-		{
-			xassert(entry.is_regular_file(), "Extra object in dataset subdirectory {}", (char*)dir.generic_u8string().data());
-			image.read(entry.path(), true);
-			dataset.push_back({ std::move(image.data), expected});
-		}
-	}
-
-public:
-	dataset_wrapper(cpath root)
-	{
-		read_labels(root);
-
-		tensor expected(class_labels.size());
-		for (size_t idx = 0; idx < class_labels.size(); ++idx)
-		{
-			expected[idx] = 1;
-			read_directory(root / class_labels[idx], expected);
-			expected[idx] = 0;
-		}
-	}
-
-	void shuffle() noexcept
-	{
-		static std::mt19937_64 rng(rng_seed);
-		std::ranges::shuffle(dataset, rng);
-	}
-
-	const auto& operator[](idx_t n) const
-	{
-		xassert(n >= 0 && (size_t)n < dataset.size(), "dataset_wrapper::operator[]: invalid index {}", n);
-		return dataset[n];
-	}
-
-	size_t size() const noexcept
-	{
-		return dataset.size();
-	}
-
-	tensor_dims input_size() const
-	{
-		xassert(!dataset.empty(), "Empty dataset");
-
-		tensor_dims input_dims = dataset[0].input.dims();
-
-		for (const auto& [input, _] : dataset)
-			xassert(input.dims() == input_dims, "Inconsistent input size across dataset");
-
-		return input_dims;
 	}
 };
 
