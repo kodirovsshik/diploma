@@ -1,10 +1,12 @@
 
 export module diploma.nn;
+
 import diploma.lin_alg;
 import diploma.utility;
 import diploma.thread_pool;
 import diploma.image;
 import diploma.dataset;
+import diploma.serialization;
 
 import libksn.type_traits;
 
@@ -13,45 +15,46 @@ import <memory>;
 import <filesystem>;
 import <unordered_map>;
 
-import <defs.hpp>;
+import "defs.hpp";
 
 
 
 
 
-template<bool is_for_feed_back>
+template<bool outer_convolution>
 size_t calculate_convolution_output_dim(size_t in, size_t kernel)
 {
-	if constexpr (is_for_feed_back)
+	if constexpr (outer_convolution)
 		return in + kernel - 1;
 	else
 		return in - kernel + 1;
 }
-template<bool is_for_feed_back, bool as_product>
+template<bool outer_convolution, bool as_product>
 tensor_dims calculate_convolution_output_dims(tensor_dims in, tensor_dims kernel)
 {
 	return {
-		calculate_convolution_output_dim<is_for_feed_back>(in.width, kernel.width),
-		calculate_convolution_output_dim<is_for_feed_back>(in.height, kernel.height),
+		calculate_convolution_output_dim<outer_convolution>(in.width, kernel.width),
+		calculate_convolution_output_dim<outer_convolution>(in.height, kernel.height),
 		as_product ? kernel.depth * in.depth : safe_div(kernel.depth, in.depth)
 	};
 }
 
-export template<bool is_for_feed_back = false, bool as_product = false>
+export template<bool outer_convolution = false, bool as_product = false>
 void perform_full_convolution(const tensor& input, const tensor& kernels, tensor& output)
 {
-	constexpr static bool is_for_feed_forward = !is_for_feed_back;
+	static_assert(!outer_convolution || !as_product);
+	constexpr static bool inner_convolution = !outer_convolution;
 
 	const auto [kernel_height, kernel_width, kernel_count] = kernels.dims();
 	const auto [input_height, input_width, input_images_count] = input.dims();
-	const auto [out_width, out_height, out_images_count] =
-		calculate_convolution_output_dims<is_for_feed_back, as_product>(input.dims(), kernels.dims());
+	const auto [output_width, output_height, output_images_count] =
+		calculate_convolution_output_dims<outer_convolution, as_product>(input.dims(), kernels.dims());
 
-	const size_t kernel_x_offset = is_for_feed_forward ? 0 : kernel_width - 1;
-	const size_t kernel_y_offset = is_for_feed_forward ? 0 : kernel_height - 1;
+	const size_t kernel_x_offset = inner_convolution ? 0 : kernel_width - 1;
+	const size_t kernel_y_offset = inner_convolution ? 0 : kernel_height - 1;
 
 	auto kernel_idx_projection = [](size_t x, size_t sz) {
-		if constexpr (is_for_feed_forward)
+		if constexpr (inner_convolution)
 			return x;
 		else
 			return sz - 1 - x;
@@ -60,63 +63,132 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 		return kernels(
 			kernel_idx_projection(y, kernel_height),
 			kernel_idx_projection(x, kernel_width),
-			kernel_id);
+			kernel_id
+		);
 	};
 
-	output.resize_clear_storage({ out_height, out_width, out_images_count });
+	output.resize_clear_storage({ output_height, output_width, output_images_count });
 
-	auto do_kernel = [&](size_t out_image, size_t in_image, size_t kernel_id)
+	size_t kernel_id = 0, input_image_id = 0, output_image_id = 0;
+
+	while (true)
 	{
-		auto do_output_element = [&](size_t y, size_t x) {
-			const size_t n_begin = is_for_feed_forward ? 0 : std::max(kernel_x_offset, x) - x;
-			const size_t m_begin = is_for_feed_forward ? 0 : std::max(kernel_y_offset, y) - y;
-			const size_t n_end = is_for_feed_forward ? kernel_width : std::min(kernel_width, input_width + kernel_x_offset - x);
-			const size_t m_end = is_for_feed_forward ? kernel_height : std::min(kernel_height, input_height + kernel_y_offset - y);
+		//convolution strategy:
 
-			fp val = 0;
-			for (size_t m = m_begin; m < m_end; ++m)
-				for (size_t n = n_begin; n < n_end; ++n)
-				{
-					const size_t in_y = y + m - kernel_y_offset;
-					const size_t in_x = x + n - kernel_x_offset;
-					val += input(in_y, in_x, in_image) * kernel_at(m, n, kernel_id);
-				}
-
-			output(y, x, out_image) += val;
-		};
-
-		for (size_t y = 0; y < out_height; ++y)
-			for (size_t x = 0; x < out_width; ++x)
-				do_output_element(y, x);
-	};
-
-	if constexpr (as_product)
-	{
-		size_t in_image = 0, kernel_id = 0;
-		for (size_t out_image = 0; out_image < out_images_count; ++out_image)
+		for (size_t kernel_y = 0; kernel_y < kernel_height; ++kernel_y)
 		{
-			do_kernel(out_image, in_image, kernel_id);
-			if (++in_image == input_images_count)
+			const size_t output_y_begin = std::max(kernel_y_offset, kernel_y) - kernel_y;
+			const size_t output_y_end = std::min(output_height, input_height + kernel_y_offset - kernel_y);
+
+			for (size_t output_y = output_y_begin; output_y < output_y_end; ++output_y)
 			{
-				in_image = 0;
+				const size_t input_y = output_y + kernel_y - kernel_y_offset;
+				
+				for (size_t output_x = 0; output_x < output_width; ++output_x)
+				{
+					auto& out = output(output_y, output_x, output_image_id);
+
+					const size_t kernel_x_begin = std::max(output_x, kernel_x_offset) - output_x;
+					const size_t kernel_x_end = std::min(input_width + kernel_x_offset - output_x, kernel_width);
+
+					for (size_t kernel_x = kernel_x_begin; kernel_x < kernel_x_end; ++kernel_x)
+					{
+						const size_t input_x = output_x + kernel_x - kernel_x_offset;
+						out += input(input_y, input_x, input_image_id) * kernel_at(kernel_y, kernel_x, kernel_id);
+					}
+				}
+			}
+		}
+
+
+		//index progression strategy:
+
+		if constexpr (as_product)
+		{
+			if (++output_image_id == output_images_count)
+				break;
+			if (++input_image_id == input_images_count)
+			{
+				input_image_id = 0;
 				++kernel_id;
 			}
 		}
+		else
+		{
+			if (++input_image_id == input_images_count)
+				{ input_image_id = 0; output_image_id++; }
+			if (output_image_id == output_images_count)
+				break;
+			kernel_id = output_image_id * input_images_count + input_image_id;
+		}
 	}
-	else
-	{
-		for (size_t out_image = 0; out_image < out_images_count; ++out_image)
-			for (size_t in_image = 0; in_image < input_images_count; ++in_image)
-			{
-				const size_t kernel_id = out_image * input_images_count + in_image;
-				do_kernel(out_image, in_image, kernel_id);
-			}
-	}
+
+	//auto do_kernels = [&](size_t out_image, size_t first_input_image, size_t kernels_begin, size_t kernels_todo)
+	//{
+	//	auto do_output_element = [&](size_t y, size_t x) {
+	//			const size_t n_begin = inner_convolution ? 0 : std::max(kernel_x_offset, x) - x;
+	//			const size_t m_begin = inner_convolution ? 0 : std::max(kernel_y_offset, y) - y;
+	//			const size_t n_end = inner_convolution ? kernel_width : std::min(kernel_width, input_width + kernel_x_offset - x);
+	//			const size_t m_end = inner_convolution ? kernel_height : std::min(kernel_height, input_height + kernel_y_offset - y);
+	//			fp val = 0;
+	//			for (size_t m = m_begin; m < m_end; ++m)
+	//				for (size_t n = n_begin; n < n_end; ++n)
+	//				{
+	//					const size_t in_y = y + m - kernel_y_offset;
+	//					const size_t in_x = x + n - kernel_x_offset;
+	//					val += input(in_y, in_x, input_image_id) * kernel_at(m, n, kernel_id);
+	//				}
+	//			output(y, x, out_image) += val;
+	//		};
+	//		for (size_t y = 0; y < output_height; ++y)
+	//			for (size_t x = 0; x < output_width; ++x)
+	//				do_output_element(y, x);
+	//};
+	//if constexpr (as_product)
+	//{
+	//	size_t input_image = 0, kernel_id = 0;
+	//	for (size_t kernel_id = 0; kernel_id < kernel_count; ++kernel_id)
+	//	{
+	//		for (size_t input_image = 0; input_image < input_images_count; ++input_image)
+	//		{
+	//			do_kernels(kernel_id * input_images_count + input_image, input_image, kernel_id, kernel_id + 1);
+	//		}
+	//	}
+	//}
+	//else
+	//{
+	//	for (size_t out_image = 0; out_image < output_images_count; ++out_image)
+	//	{
+	//		const size_t first_kernel = out_image * input_images_count;
+	//		do_kernels(out_image, 0, first_kernel, input_images_count);
+	//	}
+	//}
 }
 
 
 
-constexpr fp rng_range = (fp)0.5;
+constexpr fp rng_range = (fp)0.2;
+
+enum class layer_type : uint32_t
+{
+	none = 0,
+	leaky_relu,
+	softmax,
+	dense,
+	untied_bias,
+	convolution,
+	tied_bias,
+	pooling,
+	flattening,
+	loss_function,
+};
+
+enum class loss_function_type
+{
+	none = 0,
+	mse,
+	cross_entropy,
+};
 
 EXPORT_BEGIN
 
@@ -154,6 +226,12 @@ class leaky_relu_layer
 	}
 	void accumulate_gradient(const tensor&, const tensor&, tensor&) const
 	{
+	}
+
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(layer_type::leaky_relu);
+		serializer(slope);
 	}
 
 public:
@@ -212,6 +290,11 @@ class softmax_layer
 	{
 
 	}
+
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(layer_type::softmax);
+	}
 };
 
 
@@ -252,6 +335,13 @@ class dense_layer
 				dLdparams(i, j) += dLdoutput[i] * input[j];
 	}
 
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(layer_type::dense);
+		serializer(output_height);
+		serializer(data);
+	}
+
 public:
 	dense_layer(size_t output_size)
 		: output_height(output_size) {}
@@ -266,7 +356,6 @@ class untied_bias_layer
 	tensor_dims init(tensor_dims input_dims)
 	{
 		data.resize_storage(input_dims);
-		randomize_range(data, -rng_range, rng_range);
 
 		return input_dims;
 	}
@@ -284,6 +373,12 @@ class untied_bias_layer
 	void accumulate_gradient(const tensor&, const tensor& dLdoutput, tensor& dLdparams) const
 	{
 		dLdparams = dLdoutput;
+	}
+
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(layer_type::untied_bias);
+		serializer(data);
 	}
 };
 
@@ -311,15 +406,24 @@ class convolution_layer
 
 	void feed_forward(const tensor& in, tensor& out) const
 	{
-		perform_full_convolution(in, data, out);
+		perform_full_convolution<false, false>(in, data, out);
 	}
 	void feed_back(const tensor&, const tensor&, const tensor& dLda, tensor& dLda_prev) const
 	{
-		perform_full_convolution<true>(dLda, data, dLda_prev);
+		perform_full_convolution<true, false>(dLda, data, dLda_prev);
 	}
 	void accumulate_gradient(const tensor& input, const tensor& dLdoutput, tensor& dLdparams) const
 	{
 		perform_full_convolution<false, true>(input, dLdoutput, dLdparams);
+	}
+
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(layer_type::convolution);
+		serializer(kernel_height);
+		serializer(kernel_width);
+		serializer(out_images);
+		serializer(data);
 	}
 
 public:
@@ -336,7 +440,6 @@ class tied_bias_layer
 	tensor_dims init(tensor_dims input_dims)
 	{
 		data.resize_storage(input_dims.depth);
-		randomize_range(data, -rng_range, rng_range);
 
 		return input_dims;
 	}
@@ -363,32 +466,35 @@ class tied_bias_layer
 			dLdparams[k] = val;
 		}
 	}
+
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(layer_type::tied_bias);
+		serializer(data);
+	}
+
 };
 
 class pooling_layer
 {
 	friend class model;
 	size_t pooling_width, pooling_height;
+	tensor_dims output_dims;
 
-	tensor_dims init(tensor_dims input_dims) const
+	static size_t align_div(size_t a, size_t b)
 	{
-		xassert(
-			input_dims.width % pooling_width == 0 &&
-			input_dims.height % pooling_height == 0,
-			"Image size must be divisible by pooling size"
-		);
+		return a / b + bool(a % b);
+	}
 
-		return { input_dims.height / pooling_height, input_dims.width / pooling_width, input_dims.depth };
+	tensor_dims init(tensor_dims input_dims)
+	{
+		return output_dims = { align_div(input_dims.height, pooling_height), align_div(input_dims.width, pooling_width), input_dims.depth };
 	}
 
 	void feed_forward(const tensor& in, tensor& out) const
 	{
 		//TODO: in-place?
-		out.resize_storage({
-			in.dims().height / pooling_height,
-			in.dims().width / pooling_width,
-			in.dims().depth }
-			);
+		out.resize_storage(output_dims);
 
 		for (size_t z = 0; z < out.dims().depth; ++z)
 			for (size_t y = 0; y < out.dims().height; ++y)
@@ -399,8 +505,11 @@ class pooling_layer
 					const size_t y_block = pooling_height * y;
 					const size_t x_block = pooling_width * x;
 
-					for (size_t n = 0; n < pooling_height; ++n)
-						for (size_t m = 0; m < pooling_width; ++m)
+					const size_t n_max = std::min(pooling_height, in.dims().height - y_block);
+					const size_t m_max = std::min(pooling_width, in.dims().width - x_block);
+
+					for (size_t n = 0; n < n_max; ++n)
+						for (size_t m = 0; m < m_max; ++m)
 							val = std::max(val, in(y_block + n, x_block + m, z));
 
 					out(y, x, z) = val;
@@ -415,14 +524,18 @@ class pooling_layer
 			for (size_t y = 0; y < out.dims().height; ++y)
 				for (size_t x = 0; x < out.dims().width; ++x)
 				{
+					const size_t y_block = pooling_height * y;
+					const size_t x_block = pooling_width * x;
+
+					const size_t n_max = std::min(pooling_height, in.dims().height - y_block);
+					const size_t m_max = std::min(pooling_width, in.dims().width - x_block);
+
 					const fp& out_r = out(y, x, z);
 					const fp& dLda_r = dLda(y, x, z);
 
-					for (size_t n = 0; n < pooling_height; ++n)
-						for (size_t m = 0; m < pooling_width; ++m)
+					for (size_t n = 0; n < n_max; ++n)
+						for (size_t m = 0; m < m_max; ++m)
 						{
-							const size_t y_block = pooling_height * y;
-							const size_t x_block = pooling_width * x;
 							const fp& in_r = in(y_block + n, x_block + m, z);
 							fp& dLda_prev_r = dLda_prev(y_block + n, x_block + m, z);
 
@@ -432,6 +545,14 @@ class pooling_layer
 	}
 	void accumulate_gradient(const tensor&, const tensor&, tensor&) const
 	{
+	}
+
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(layer_type::pooling);
+		serializer(pooling_height);
+		serializer(pooling_width);
+		serializer(output_dims);
 	}
 
 public:
@@ -463,6 +584,13 @@ class flattening_layer
 	void accumulate_gradient(const tensor&, const tensor&, tensor&) const
 	{
 	}
+
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(layer_type::flattening);
+		serializer(in_dims);
+	}
+
 };
 
 
@@ -471,6 +599,14 @@ class flattening_layer
 
 class mse_loss_function
 {
+	friend class model;
+
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(layer_type::loss_function);
+		serializer(loss_function_type::mse);
+	}
+
 public:
 	fp f(const tensor& observed, const tensor& expected)
 	{
@@ -497,6 +633,14 @@ public:
 
 class cross_entropy_loss_function
 {
+	friend class model;
+
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(layer_type::loss_function);
+		serializer(loss_function_type::cross_entropy);
+	}
+
 	static constexpr fp epsilon = 1e-5f;
 
 	static void f_update_helper(fp& accumulator, fp expected, fp observed)
@@ -555,27 +699,6 @@ public:
 
 
 
-class sgd_optimizer
-{
-	friend class model;
-
-	fp rate;
-
-	fp get_learning_rate() const
-	{
-		return rate;
-	}
-
-public:
-	sgd_optimizer(fp learning_rate)
-		: rate(learning_rate) {}
-};
-
-
-
-
-
-
 class model
 {
 	using layer_holder_t = std::variant<dense_layer, untied_bias_layer, convolution_layer, pooling_layer, tied_bias_layer, leaky_relu_layer, softmax_layer, flattening_layer>;
@@ -601,7 +724,24 @@ class model
 	}
 	void assert_is_finished(bool is = true) const
 	{
-		xassert(this->is_finished() == is, "model: action not applicable for {}finished models", this->is_finished() ? "" : "un");
+		xassert(
+			this->is_finished() == is,
+			"model: action not applicable for {}finished models",
+			this->is_finished() ? "" : "un"
+		);
+	}
+
+	bool has_input_dims() const
+	{
+		return m.input_dims != tensor_dims{};
+	}
+	void assert_has_input_dims(bool is = true) const
+	{
+		xassert(
+			this->has_input_dims() == is,
+			"model: action not applicable for model with{} input size specified",
+			this->has_input_dims() ? "" : "out"
+		);
 	}
 
 	//one must imagine the fun of using "#define concept static constexpr bool" to allow defining concepts inside classes
@@ -634,11 +774,21 @@ class model
 	}
 
 public:
+	model() {}
+
 	model(tensor_dims input_layer_dimensions)
 		: m{ .input_dims = input_layer_dimensions, .output_dims = input_layer_dimensions } {}
 
+	void set_input_size(tensor_dims dims)
+	{
+		assert_has_input_dims(false);
+		m.input_dims = m.output_dims = dims;
+		assert_has_input_dims(true);
+	}
+
 	void add_layer(layer_holder_t layer)
 	{
+		assert_has_input_dims();
 		assert_is_finished(false);
 		m.output_dims = variant_invoke(layer, init, m.output_dims);
 		m.layers.push_back(std::move(layer));
@@ -669,11 +819,6 @@ public:
 	size_t get_layer_count() const noexcept
 	{
 		return m.layers.size();
-	}
-	size_t get_layer_parameter_count(size_t i) const noexcept
-	{
-		xassert(i < get_layer_count(), "Invalid layer index");
-		return get_raw_layer_parameter_count(m.layers[i]).total();
 	}
 	size_t get_total_parameter_count() const noexcept
 	{
@@ -724,6 +869,8 @@ public:
 			{
 				const auto& [input, expected] = at(dataset, i);
 				accumulate_gradient_single(input, expected, states[thread_id].dLdparams, states[thread_id].stats);
+				//if (thread_id == 0) std::println("fit: {}/{}", i, end - begin);
+				// ^^^ Uncomment for progress reporting
 			}
 		};
 		pool.schedule_split_work(0, batch_size, worker);
@@ -764,6 +911,38 @@ public:
 		return merge_stats(states, size(dataset));
 	}
 
+	void serialize(serializer_t& serializer)
+	{
+		assert_is_finished();
+
+		for (const auto& layer : m.layers)
+			variant_invoke(layer, serialize, serializer);
+		variant_invoke(m.loss_function.value(), serialize, serializer);
+
+		serializer.write_crc();
+		xassert(serializer, "Faield to save model");
+	}
+
+	bool deserialize(deserializer_t& deserializer)
+	{
+		//TODO
+		return false;
+	}
+
+private:
+
+	void update_statistics(model_statistics& stats, const tensor& observed, const tensor& expected)
+	{
+		stats.loss += this->loss(observed, expected);
+		stats.accuracy += get_max_idx(observed) == get_max_idx(expected);
+	}
+
+	size_t get_layer_parameter_count(size_t i) const noexcept
+	{
+		xassert(i < get_layer_count(), "Invalid layer index");
+		return get_raw_layer_parameter_count(m.layers[i]).total();
+	}
+
 	fp loss(const tensor& observed, const tensor& expected)
 	{
 		return variant_invoke(m.loss_function.value(), f, observed, expected);
@@ -771,13 +950,6 @@ public:
 	fp loss_contribution(const tensor& input, const tensor& expected)
 	{
 		return loss(predict(input), expected);
-	}
-
-private:
-	void update_statistics(model_statistics& stats, const tensor& observed, const tensor& expected)
-	{
-		stats.loss += this->loss(observed, expected);
-		stats.accuracy += get_max_idx(observed) == get_max_idx(expected);
 	}
 
 	template<class R>
