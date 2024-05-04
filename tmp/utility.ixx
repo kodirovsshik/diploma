@@ -1,19 +1,18 @@
 
-module;
-
-#define NOMINMAX
-#include <Windows.h>
-
-#include <vector>
-#include <numeric>
-#include <ranges>
-#include <random>
-
-#include "defs.hpp"
-
-
-
 export module diploma.utility;
+
+#define NOMINMAX //why do you not work
+import <Windows.h>;
+#undef min
+#undef max
+
+import <vector>;
+import <numeric>;
+import <ranges>;
+import <random>;
+
+import "defs.hpp";
+
 
 
 EXPORT_BEGIN

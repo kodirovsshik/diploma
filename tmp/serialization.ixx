@@ -1,15 +1,13 @@
 
-module;
-
-#include <iostream>
-#include <ranges>
-#include <type_traits>
-
-#include "defs.hpp"
-
 export module diploma.serialization;
 
 import diploma.crc;
+
+import <iostream>;
+import <ranges>;
+import <type_traits>;
+
+import "defs.hpp";
 
 
 
@@ -20,16 +18,17 @@ using CRC = crc64_calculator&;
 
 
 template<class T>
-concept trivial_type = std::is_trivially_copyable_v<T>;
+concept trivially_serializeable = std::is_trivially_copyable_v<T>;
 
 template<class...>
 constexpr bool always_false = false;
 
 template<class R>
-concept trivial_contiguous_range =
-std::ranges::range<R> &&
-std::contiguous_iterator<std::ranges::iterator_t<R>> &&
-trivial_type<typename std::iterator_traits<std::ranges::iterator_t<R>>::value_type>;
+concept trivially_serializeable_range =
+	std::ranges::range<R> &&
+	std::contiguous_iterator<std::ranges::iterator_t<R>> &&
+	trivially_serializeable<typename std::ranges::range_value_t<R>>
+;
 
 
 
@@ -82,7 +81,7 @@ struct serialize_helper
 	}
 };
 
-template<trivial_type T>
+template<trivially_serializeable T>
 struct serialize_helper<T>
 {
 	bool operator()(sink os, const T& x, CRC crc) const
@@ -95,7 +94,7 @@ struct serialize_helper<T>
 	}
 };
 
-template<std::ranges::range R> requires(!trivial_type<R>)
+template<std::ranges::range R> requires(!trivially_serializeable<R>)
 struct serialize_helper<R>
 {
 	bool operator()(sink os, const R& r, CRC crc) const
@@ -104,7 +103,7 @@ struct serialize_helper<R>
 		if (!serialize_helper<size_t>{}(os, size, crc))
 			return false;
 
-		if constexpr (trivial_contiguous_range<R>)
+		if constexpr (trivially_serializeable_range<R>)
 		{
 			const auto& first_element = *r.begin();
 			const size_t elem_count = std::ranges::distance(r);
@@ -132,7 +131,7 @@ struct serialize_helper<R>
 		else
 			xassert(false, "Range size mismatch on deserialization");
 
-		if constexpr (trivial_contiguous_range<R>)
+		if constexpr (trivially_serializeable_range<R>)
 		{
 			const auto& first_element = *r.begin();
 			return deserialize_memory_region(is, (void*)std::addressof(first_element), sizeof(first_element) * size, crc);
@@ -149,7 +148,7 @@ struct serialize_helper<R>
 	}
 };
 
-template<class... Ts> requires(!trivial_type<std::tuple<Ts...>>)
+template<class... Ts> requires(!trivially_serializeable<std::tuple<Ts...>>)
 struct serialize_helper<std::tuple<Ts...>>
 {
 	template<size_t level = 0>

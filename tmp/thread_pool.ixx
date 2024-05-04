@@ -1,17 +1,14 @@
 
-module;
-
-#include <stdint.h>
-#include <utility>
-#include <functional>
-#include <thread>
-#include <queue>
-#include <mutex>
-#include <atomic>
-
-
-
 export module diploma.thread_pool;
+
+import <stdint.h>;
+
+import <utility>;
+import <functional>;
+import <thread>;
+import <queue>;
+import <mutex>;
+import <atomic>;
 
 
 

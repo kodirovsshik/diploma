@@ -1,16 +1,12 @@
 
-module;
-
-#include "defs.hpp"
-#include <ksn/ksn.hpp>
-
-#include <vector>
-
-
-
 export module diploma.lin_alg;
 import diploma.utility;
 import diploma.thread_pool;
+
+import <memory>;
+
+import "defs.hpp";
+
 
 
 EXPORT_BEGIN
@@ -38,15 +34,6 @@ struct tensor_dims
 		idx = safe_fma(idx, width, x);
 		return idx;
 	}
-
-	//size_t dimentionality() const noexcept
-	//{
-	//	size_t d = 3;
-	//	if (depth > 1) return d; else --d;
-	//	if (width > 1) return d; else --d;
-	//	if (height > 1) return d; else --d;
-	//	return d;
-	//}
 };
 
 #define TENSOR_USE_DATA_SPAN _KSN_IS_DEBUG_BUILD
@@ -67,17 +54,21 @@ class tensor
 		{
 			data = std::make_unique<fp[]>(dims.total());
 			capacity = dims.total();
-			this->dims = dims;
-#if TENSOR_USE_DATA_SPAN
-			data_span = { data.get(), dims.total() };
-#endif
+			reshape(dims);
 		}
 		void resize(tensor_dims dims)
 		{
 			if (dims.total() > capacity)
 				allocate(dims);
 			else
-				this->dims = dims;
+				reshape(dims);
+		}
+		void reshape(tensor_dims dims)
+		{
+			this->dims = dims;
+#if TENSOR_USE_DATA_SPAN
+			data_span = { data.get(), dims.total() };
+#endif
 		}
 	} m;
 
@@ -165,7 +156,7 @@ public:
 	void reshape(tensor_dims dims)
 	{
 		xassert(dims.total() == size(), "tensor::reshape: invalid new shape");
-		m.dims = dims;
+		m.reshape(dims);
 	}
 
 	void resize_storage(tensor_dims dims)

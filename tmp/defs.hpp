@@ -1,10 +1,12 @@
 
-#include <conio.h>
+import <print>;
+import <source_location>;
+import <filesystem>;
+import <stacktrace>;
 
-#include <print>
-#include <source_location>
-#include <filesystem>
-#include <stacktrace>
+import <conio.h>;
+
+import <ksn/ksn.hpp>;
 
 
 
@@ -35,7 +37,7 @@
 #define EXPORT_BEGIN export{
 #define EXPORT_END }
 
-#define DO_DEBUG_CHECKS 0
+#define DO_DEBUG_CHECKS _KSN_IS_DEBUG_BUILD
 
 #if DO_DEBUG_CHECKS
 #define dassert(cond) xassert(cond, "Debug assertion \"" #cond "\" has failed")

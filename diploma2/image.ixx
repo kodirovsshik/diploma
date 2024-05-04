@@ -179,7 +179,7 @@ bool image<fp_t>::read_bmp(cpath filename, image_settings settings)
 	const unsigned n_color_planes_out = grayscale_out ? 1 : n_planes_in;
 	const unsigned n_color_planes_in = std::min(n_planes_in, 3u);
 	const fp_t grayscale_normalizer = (fp_t)1 / (n_color_planes_in * 255);
-	const fp_t channel_normalizer = (fp_t)1 / (n_color_planes_in * 255);
+	const fp_t channel_normalizer = (fp_t)1 / 255;
 
 	data.resize_storage({ height, width, n_color_planes_out + (bool)alpha_out });
 
@@ -197,23 +197,25 @@ bool image<fp_t>::read_bmp(cpath filename, image_settings settings)
 				channels[i] = read_byte();
 
 			if (grayscale_out)
-				data(y, x, 0) = (channels[0] + channels[1] + channels[2]) / grayscale_normalizer;
+				data(y, x, 0) = (channels[0] + channels[1] + channels[2]) * grayscale_normalizer;
 			else
 			{
 				if (n_color_planes_in == 1)
 					channels[2] = channels[1] = channels[0];
 
 				for (uint32_t plane = 0; plane < n_color_planes_out; ++plane)
-					data(y, x, bgr_to_rgb_mapper[plane]) = channels[plane] / channel_normalizer;
-
-				if (alpha_out)
-					data(y, x, n_color_planes_out) = channels[3] / channel_normalizer;
+					data(y, x, bgr_to_rgb_mapper[plane]) = channels[plane] * channel_normalizer;
 			}
+
+			if (alpha_out)
+				data(y, x, n_color_planes_out) = channels[3] * channel_normalizer;
 		}
 
 		for (int i = 0; i < filler_bytes; ++i)
 			(void)read_byte();
 	}
+
+	return true;
 }
 
 template<class fp_t>
@@ -259,8 +261,6 @@ void image<fp_t>::write_qoi(cpath filename, image_settings settings)
 
 	using pixel = std::array<uint8_t, 4>;
 
-	//pixel array[64]{};
-	//pixel prev_pixel{ 0,0,0,255 };
 	pixel curr_pixel{ 0,0,0,255 };
 
 	auto fetch_pixel = [&](size_t y, size_t x){
@@ -273,54 +273,6 @@ void image<fp_t>::write_qoi(cpath filename, image_settings settings)
 			curr_pixel[2] = curr_pixel[1] = curr_pixel[0];
 		}
 	};
-
-	//auto pixel_array_idx = [](const pixel (&pixel)) {
-	//	uint8_t idx = 0;
-	//	idx += pixel[0] * 3;
-	//	idx += pixel[1] * 5;
-	//	idx += pixel[2] * 7;
-	//	idx += pixel[3] * 11;
-	//	return idx % 64;
-	//};
-	//auto array_for = [&](const pixel(&pixel))
-	//{
-	//	return array[pixel_array_idx(pixel)];
-	//};
-
-	//struct _chunk_index_t
-	//{
-	//	std::ofstream& fout;
-	//	decltype(try_write)& try_write;
-	//
-	//	size_t last_idx = -1, last_run = 0;
-	//	void operator()(size_t idx)
-	//	{
-	//		dassert(idx < 64);
-	//
-	//		if (idx == last_idx && last_run < 62)
-	//			++last_run;
-	//		else
-	//		{
-	//			transfer_stored_run();
-	//			last_idx = idx;
-	//			last_run = 1;
-	//		}
-	//	}
-	//
-	//	void transfer_stored_run()
-	//	{
-	//		if (last_run < 1)
-	//			return;
-	//		try_write(&last_idx, 1);
-	//		if (last_run == 1)
-	//			return;
-	//		
-	//		const size_t tmp = (last_run - 1) | 0b11000000;
-	//		try_write(&tmp, 1);
-	//		last_run = 0;
-	//		last_idx = -1;
-	//	}
-	//} chunk_index{ fout, try_write };
 
 
 	

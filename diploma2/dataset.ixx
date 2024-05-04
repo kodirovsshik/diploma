@@ -85,7 +85,7 @@ class dataset
 				(char*)entry.path().filename().generic_u8string().data(),
 				(char*)dir.generic_u8string().data()
 			);
-			image.read(entry.path(), { .colors = threestate::no });
+			image.read(entry.path(), { .colors = threestate::no, .alpha = threestate::no });
 			data.push_back({ std::move(image.data), expected });
 		}
 	}

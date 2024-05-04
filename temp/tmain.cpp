@@ -21,7 +21,7 @@ using csw = const std::string_view&;
 
 
 
-cpath dataset_root = "C:/dataset_pneumonia/png32";
+cpath dataset_root = "C:/dataset_pneumonia/bmp";
 
 
 
@@ -202,12 +202,12 @@ void move_dir_contents(cpath from, cpath to)
 		std::filesystem::rename(entry.path(), to / entry.path().filename());
 }
 
-void test_dataset_generator()
+void val_dataset_generator()
 {
-	const double test_dataset_fraction = 0.1;
+	const double val_dataset_fraction = 0.1;
 
 	cpath images_train_dir = dataset_root / "train";
-	cpath images_test_dir = dataset_root / "test";
+	cpath images_val_dir = dataset_root / "val";
 
 	if (!std::filesystem::exists(images_train_dir))
 	{
@@ -217,40 +217,40 @@ void test_dataset_generator()
 		std::filesystem::rename(legacy_images_train_dir, images_train_dir);
 	}
 
-	std::filesystem::create_directory(images_test_dir);
+	std::filesystem::create_directory(images_val_dir);
 	for (const auto& disease : diseases)
 	{
-		cpath dst_dir = images_test_dir / disease;
+		cpath dst_dir = images_val_dir / disease;
 		std::filesystem::create_directory(dst_dir);
 	}
 
 	std::mt19937_64 rng(std::random_device{}());
 
-	std::unordered_set<unsigned> test_indices;
+	std::unordered_set<unsigned> val_indices;
 	for (int category_number = 0; category_number < categories_count; ++category_number)
 	{
 		std::print("Category {} \"{}\": ", category_number, diseases[category_number]);
 
 		cpath current_train_dir = images_train_dir / diseases[category_number];
-		cpath current_test_dir = images_test_dir / diseases[category_number];
-		move_dir_contents(current_test_dir, current_train_dir);
+		cpath current_val_dir = images_val_dir / diseases[category_number];
+		move_dir_contents(current_val_dir, current_train_dir);
 
 		const unsigned n_total_images = directory_files_count(current_train_dir);
-		const unsigned n_test_images = (unsigned)(n_total_images * test_dataset_fraction * (1 - DBL_EPSILON) + 1);
-		std::print("{} total images, {} test images", n_total_images, n_test_images);
+		const unsigned n_val_images = (unsigned)(n_total_images * val_dataset_fraction * (1 - DBL_EPSILON) + 1);
+		std::print("{} total images, {} val images", n_total_images, n_val_images);
 
 
 		std::uniform_int_distribution<unsigned> distr(0, n_total_images - 1);
-		test_indices.clear();
-		while (test_indices.size() != n_test_images)
-			test_indices.insert(distr(rng));
+		val_indices.clear();
+		while (val_indices.size() != n_val_images)
+			val_indices.insert(distr(rng));
 
 		unsigned file_idx = 0;
 		for (const auto& entry : std::filesystem::directory_iterator(current_train_dir))
 		{
-			if (!test_indices.contains(file_idx++))
+			if (!val_indices.contains(file_idx++))
 				continue;
-			std::filesystem::rename(entry.path(), current_test_dir / entry.path().filename());
+			std::filesystem::rename(entry.path(), current_val_dir / entry.path().filename());
 		}
 		std::println(" - done");
 	}
@@ -284,7 +284,7 @@ void _renamer_disease_to_idx_worker(cpath index_dir)
 void renamer_disease_to_idx()
 {
 	_renamer_disease_to_idx_worker(dataset_root / "train");
-	_renamer_disease_to_idx_worker(dataset_root / "test");
+	_renamer_disease_to_idx_worker(dataset_root / "val");
 }
 
 void _renamer_idx_to_disease_worker(cpath index_dir)
@@ -308,7 +308,7 @@ void _renamer_idx_to_disease_worker(cpath index_dir)
 void renamer_idx_to_disease()
 {
 	_renamer_idx_to_disease_worker(dataset_root / "train");
-	_renamer_idx_to_disease_worker(dataset_root / "test");
+	_renamer_idx_to_disease_worker(dataset_root / "val");
 }
 
 
@@ -345,8 +345,8 @@ int main()
 	try
 	{
 		renamer_idx_to_disease();
-		test_dataset_generator();
-		renamer_disease_to_idx();
+		//val_dataset_generator();
+		//renamer_disease_to_idx();
 		return_code = 0;
 	}
 	catch (const std::filesystem::filesystem_error& e)
