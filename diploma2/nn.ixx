@@ -129,6 +129,13 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 
 constexpr fp rng_range = (fp)0.2;
 
+enum serialized_obj_type
+{
+	none = 0,
+	layer,
+	loss_function,
+};
+
 enum class layer_type : uint32_t
 {
 	none = 0,
@@ -140,7 +147,6 @@ enum class layer_type : uint32_t
 	tied_bias,
 	pooling,
 	flattening,
-	loss_function,
 };
 
 enum class loss_function_type
@@ -190,8 +196,13 @@ class leaky_relu_layer
 
 	void serialize(serializer_t& serializer) const
 	{
+		serializer(serialized_obj_type::layer);
 		serializer(layer_type::leaky_relu);
 		serializer(slope);
+	}
+	void deserialize(deserializer_t& deserializer)
+	{
+		deserializer(slope);
 	}
 
 public:
@@ -253,7 +264,11 @@ class softmax_layer
 
 	void serialize(serializer_t& serializer) const
 	{
+		serializer(serialized_obj_type::layer);
 		serializer(layer_type::softmax);
+	}
+	void deserialize(deserializer_t& deserializer)
+	{
 	}
 };
 
@@ -297,10 +312,17 @@ class dense_layer
 
 	void serialize(serializer_t& serializer) const
 	{
+		serializer(serialized_obj_type::layer);
 		serializer(layer_type::dense);
 		serializer(output_height);
 		serializer(data);
 	}
+	void deserialize(deserializer_t& deserializer)
+	{
+		deserializer(output_height);
+		deserializer(data);
+	}
+	dense_layer() = default;
 
 public:
 	dense_layer(size_t output_size)
@@ -337,8 +359,13 @@ class untied_bias_layer
 
 	void serialize(serializer_t& serializer) const
 	{
+		serializer(serialized_obj_type::layer);
 		serializer(layer_type::untied_bias);
 		serializer(data);
+	}
+	void deserialize(deserializer_t& deserializer)
+	{
+		deserializer(data);
 	}
 };
 
@@ -379,12 +406,22 @@ class convolution_layer
 
 	void serialize(serializer_t& serializer) const
 	{
+		serializer(serialized_obj_type::layer);
 		serializer(layer_type::convolution);
 		serializer(kernel_height);
 		serializer(kernel_width);
 		serializer(out_images);
 		serializer(data);
 	}
+	void deserialize(deserializer_t& deserializer)
+	{
+		deserializer(kernel_height);
+		deserializer(kernel_width);
+		deserializer(out_images);
+		deserializer(data);
+	}
+
+	convolution_layer() = default;
 
 public:
 	convolution_layer(size_t height, size_t width, size_t output_images)
@@ -429,15 +466,20 @@ class tied_bias_layer
 
 	void serialize(serializer_t& serializer) const
 	{
+		serializer(serialized_obj_type::layer);
 		serializer(layer_type::tied_bias);
 		serializer(data);
 	}
-
+	void deserialize(deserializer_t& deserializer)
+	{
+		deserializer(data);
+	}
 };
 
 class pooling_layer
 {
 	friend class model;
+
 	size_t pooling_width, pooling_height;
 	tensor_dims output_dims;
 
@@ -509,11 +551,20 @@ class pooling_layer
 
 	void serialize(serializer_t& serializer) const
 	{
+		serializer(serialized_obj_type::layer);
 		serializer(layer_type::pooling);
 		serializer(pooling_height);
 		serializer(pooling_width);
 		serializer(output_dims);
 	}
+	void deserialize(deserializer_t& deserializer)
+	{
+		deserializer(pooling_height);
+		deserializer(pooling_width);
+		deserializer(output_dims);
+	}
+
+	pooling_layer() = default;
 
 public:
 	pooling_layer(size_t pooling_height, size_t pooling_width)
@@ -547,10 +598,14 @@ class flattening_layer
 
 	void serialize(serializer_t& serializer) const
 	{
+		serializer(serialized_obj_type::layer);
 		serializer(layer_type::flattening);
 		serializer(in_dims);
 	}
-
+	void deserialize(deserializer_t& deserializer)
+	{
+		deserializer(in_dims);
+	}
 };
 
 
@@ -563,7 +618,7 @@ class mse_loss_function
 
 	void serialize(serializer_t& serializer) const
 	{
-		serializer(layer_type::loss_function);
+		serializer(serialized_obj_type::loss_function);
 		serializer(loss_function_type::mse);
 	}
 
@@ -597,7 +652,7 @@ class cross_entropy_loss_function
 
 	void serialize(serializer_t& serializer) const
 	{
-		serializer(layer_type::loss_function);
+		serializer(serialized_obj_type::loss_function);
 		serializer(loss_function_type::cross_entropy);
 	}
 
@@ -762,6 +817,11 @@ public:
 		m.loss_function = loss_function;
 	}
 
+	void reset()
+	{
+		m = {};
+	}
+
 	tensor predict(tensor in) const
 	{
 		assert_is_finished();
@@ -870,25 +930,108 @@ public:
 		return merge_stats(states, size(dataset));
 	}
 
-	void serialize(serializer_t& serializer)
+	void serialize(serializer_t& serializer) const
 	{
 		assert_is_finished();
 
+		serializer(m.input_dims);
+		serializer(m.output_dims);
 		for (const auto& layer : m.layers)
 			variant_invoke(layer, serialize, serializer);
 		variant_invoke(m.loss_function.value(), serialize, serializer);
 
 		serializer.write_crc();
-		xassert(serializer, "Faield to save model");
 	}
 
 	bool deserialize(deserializer_t& deserializer)
 	{
-		//TODO
-		return false;
+		assert_has_input_dims(false);
+
+		bool ok = true;
+		bool stop = false;
+
+		ok &= deserializer(m.input_dims);
+		ok &= deserializer(m.output_dims);
+
+		serialized_obj_type next_object_type;
+		while (ok && !stop)
+		{
+			ok &= deserializer(next_object_type);
+
+			if (!ok) 	break;
+
+			switch (next_object_type)
+			{
+			case serialized_obj_type::layer:
+				ok = try_deserialize_layer(deserializer);
+				break;
+
+			case serialized_obj_type::loss_function:
+				ok = try_deserialize_loss_function(deserializer);
+				stop = true;
+				break;
+
+			default:
+				ok = false;
+				break;
+			}
+		}
+
+		if (ok) ok = deserializer.test_crc();
+		if (!ok) reset();
+
+		return ok;
 	}
 
 private:
+	bool try_deserialize_layer(deserializer_t& deserializer)
+	{
+		std::optional<layer_holder_t> layer;
+
+		layer_type type{};
+		deserializer(type);
+		switch (type)
+		{
+		case layer_type::leaky_relu: layer = leaky_relu_layer{}; break;
+		case layer_type::softmax: layer = softmax_layer{}; break;
+		case layer_type::dense: layer = dense_layer{}; break;
+		case layer_type::untied_bias: layer = untied_bias_layer{}; break;
+		case layer_type::convolution: layer = convolution_layer{}; break;
+		case layer_type::tied_bias: layer = tied_bias_layer{}; break;
+		case layer_type::pooling: layer = pooling_layer{}; break;
+		case layer_type::flattening: layer = flattening_layer{}; break;
+		default: break;
+		}
+		if (!layer.has_value())
+			return false;
+
+		variant_invoke(layer.value(), deserialize, deserializer);
+		if (!deserializer)
+			return false;
+
+		m.layers.push_back(std::move(layer.value()));
+		return true;
+	}
+	bool try_deserialize_loss_function(deserializer_t& deserializer)
+	{
+		loss_function_holder_t func;
+
+		loss_function_type type{};
+		deserializer(type);
+
+		switch (type)
+		{
+		case loss_function_type::mse: func = mse_loss_function{}; break;
+		case loss_function_type::cross_entropy: func = cross_entropy_loss_function{}; break;
+		default: break;
+		}
+
+		if (!func.has_value())
+			return false;
+
+		m.loss_function = std::move(func);
+		return true;
+	}
 
 	void update_statistics(model_statistics& stats, const tensor& observed, const tensor& expected)
 	{

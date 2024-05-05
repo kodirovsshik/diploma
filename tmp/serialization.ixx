@@ -66,63 +66,157 @@ bool deserialize_object_memory(source is, T& x, CRC crc)
 
 
 
+
+
+#define strategy_list X(trivial_copy) X(range)
+
 template<class T>
-struct serialize_helper
+consteval auto pick_serialize_strategy();
+
+
+#define X(strategy) friend struct serialize_strategy_ ## strategy;
+
+export class serializer_t
 {
-	bool operator()(sink, const T&, CRC) const
+	strategy_list;
+
+	crc64_calculator crc_;
+	std::ostream& out;
+
+	template<class T>
+	static constexpr bool has_serialize_method =
+		requires(const T & t, serializer_t serializer) { { t.serialize(serializer) }; };
+
+	template<class T>
+	bool write(const T& x)
 	{
-		static_assert(always_false<T>, "Invalid type for serialization");
-		return false;
+		return serialize_object_memory(out, x, crc_);
 	}
-	bool operator()(source, T&, CRC) const
+	bool write(const void* data, size_t data_bytes)
 	{
-		static_assert(always_false<T>, "Invalid type for deserialization");
-		return false;
+		return serialize_memory_region(out, data, data_bytes, crc_);
+	}
+
+public:
+	serializer_t(std::ostream& os) : out(os) {}
+
+	template<class T> requires(!has_serialize_method<T>)
+	bool operator()(const T& x)
+	{
+		return pick_serialize_strategy<T>()(x, *this);
+	}
+
+	template<class T> requires(has_serialize_method<T>)
+	bool operator()(const T& x)
+	{
+		x.serialize(*this);
+		return (bool)*this;
+	}
+
+	bool write_crc() { return (*this)(this->crc()); }
+	uint64_t crc() const { return this->crc_.value(); }
+
+	explicit operator bool() const noexcept { return (bool)this->out; }
+};
+
+export class deserializer_t
+{
+	strategy_list;
+
+	template<class T>
+	static constexpr bool has_deserialize_method =
+		requires(T & t, deserializer_t deserializer) { { t.deserialize(deserializer) }; };
+
+	crc64_calculator crc_;
+	std::istream& in;
+
+	template<class T>
+	bool read(T& x)
+	{
+		return deserialize_object_memory(in, x, crc_);
+	}
+	bool read(void* data, size_t data_bytes)
+	{
+		return deserialize_memory_region(in, data, data_bytes, crc_);
+	}
+
+public:
+	deserializer_t(std::istream& is) : in(is) {}
+
+	template<class T> requires(!std::is_const_v<T>&& !has_deserialize_method<T>)
+	bool operator()(T& x)
+	{
+		return pick_serialize_strategy<T>()(x, *this);
+	}
+
+	template<class T> requires(!std::is_const_v<T> && has_deserialize_method<T>)
+	bool operator()(T& x)
+	{
+		return x.deserialize(*this) && (bool)*this;
+	}
+
+	bool test_crc()
+	{
+		const uint64_t expected_crc = this->crc();
+
+		uint64_t observed_crc;
+		if (!(*this)(observed_crc))
+			return false;
+
+		return observed_crc == expected_crc;
+	}
+	uint64_t crc() const { return this->crc_.value(); }
+
+	explicit operator bool() const noexcept { return (bool)this->in; }
+};
+
+
+
+
+
+struct serialize_strategy_trivial_copy
+{
+	template<trivially_serializeable T>
+	bool operator()(const T& x, serializer_t& serializer) const
+	{
+		return serializer.write(x);
+	}
+	template<trivially_serializeable T>
+	bool operator()(T& x, deserializer_t& deserializer) const
+	{
+		return deserializer.read(x);
 	}
 };
 
-template<trivially_serializeable T>
-struct serialize_helper<T>
+struct serialize_strategy_range
 {
-	bool operator()(sink os, const T& x, CRC crc) const
+	template<std::ranges::range R>
+	bool operator()(const R& r, serializer_t& serializer) const
 	{
-		return serialize_object_memory(os, x, crc);
-	}
-	bool operator()(source is, T& x, CRC crc) const
-	{
-		return deserialize_object_memory(is, x, crc);
-	}
-};
-
-template<std::ranges::range R> requires(!trivially_serializeable<R>)
-struct serialize_helper<R>
-{
-	bool operator()(sink os, const R& r, CRC crc) const
-	{
-		const auto size = (size_t)std::ranges::distance(r);
-		if (!serialize_helper<size_t>{}(os, size, crc))
+		if (!serializer((size_t)std::ranges::distance(r)))
 			return false;
 
 		if constexpr (trivially_serializeable_range<R>)
 		{
 			const auto& first_element = *r.begin();
 			const size_t elem_count = std::ranges::distance(r);
-			return serialize_memory_region(os, std::addressof(first_element), sizeof(first_element) * elem_count, crc);
+			return serializer.write(std::addressof(first_element), sizeof(first_element) * elem_count);
 		}
 		else
 		{
 			for (auto& x : r)
 			{
-				const bool ok = serialize_helper<std::remove_cvref_t<decltype(x)>>{}(os, x, crc);
-				if (!ok) return false;
+				if (!serializer(x))
+					return false;
 			}
 			return true;
 		}
 	}
-	bool operator()(source is, R& r, CRC crc) const
+	template<std::ranges::range R>
+	bool operator()(R& r, deserializer_t& deserializer) const
 	{
 		size_t size;
-		if (!serialize_helper<size_t>{}(is, size, crc))
+		if (!deserializer(size))
 			return false;
 
 		if constexpr (requires() { r.resize(size); })
@@ -134,113 +228,28 @@ struct serialize_helper<R>
 		if constexpr (trivially_serializeable_range<R>)
 		{
 			const auto& first_element = *r.begin();
-			return deserialize_memory_region(is, (void*)std::addressof(first_element), sizeof(first_element) * size, crc);
+			return deserializer.read((void*)std::addressof(first_element), sizeof(first_element) * size);
 		}
 		else
 		{
 			for (auto& x : r)
 			{
-				const bool ok = serialize_helper<std::remove_cvref_t<decltype(x)>>{}(is, x, crc);
-				if (!ok) return false;
+				if (!deserializer(x))
+					return false;
 			}
 			return true;
 		}
 	}
 };
 
-template<class... Ts> requires(!trivially_serializeable<std::tuple<Ts...>>)
-struct serialize_helper<std::tuple<Ts...>>
+
+template<class T>
+consteval auto pick_serialize_strategy()
 {
-	template<size_t level = 0>
-	bool traverse_tuple(sink os, const std::tuple<Ts...>& t, CRC crc) const
-	{
-		if constexpr (level == sizeof...(Ts))
-			return true;
-		else
-		{
-			using T = std::tuple_element_t<level, std::tuple<Ts...>>;
-
-			const T& val = std::get<level>(t);
-
-			const bool ok = serialize_helper<T>{}(os, val, crc);
-			if (!ok)
-				return ok;
-			return traverse_tuple<level + 1>(os, t, crc);
-		}
-	}
-	bool operator()(sink os, const std::tuple<Ts...>& t, CRC crc) const
-	{
-		return this->traverse_tuple(os, t, crc);
-	}
-
-	template<size_t level = 0>
-	bool traverse_tuple(source is, std::tuple<Ts...>& t, CRC crc) const
-	{
-		if constexpr (level == sizeof...(Ts))
-			return true;
-		else
-		{
-			using T = std::tuple_element_t<level, std::tuple<Ts...>>;
-
-			T& val = std::get<level>(t);
-
-			const bool ok = serialize_helper<T>{}(is, val, crc);
-			if (!ok)
-				return ok;
-			return traverse_tuple<level + 1>(is, t, crc);
-		}
-	}
-	bool operator()(source is, std::tuple<Ts...>& t, CRC crc) const
-	{
-		return this->traverse_tuple(is, t, crc);
-	}
-};
-
-
-
-export class serializer_t
-{
-	crc64_calculator crc_;
-	std::ostream& out;
-
-public:
-	serializer_t(std::ostream& os) : out(os) {}
-
-	template<class T>
-	bool operator()(const T& x)
-	{
-		return serialize_helper<T>{}(out, x, crc_);
-	}
-
-	bool write_crc() { return (*this)(this->crc()); }
-	uint64_t crc() const { return this->crc_.value(); }
-
-	explicit operator bool() const noexcept { return (bool)this->out; }
-};
-
-export class deserializer_t
-{
-	crc64_calculator crc_;
-	std::istream& in;
-
-public:
-	deserializer_t(std::istream& is) : in(is) {}
-
-	template<class T> requires(!std::is_const_v<T>)
-	bool operator()(T& x)
-	{
-		return serialize_helper<T>{}(in, x, crc_);
-	}
-
-	bool test_crc()
-	{
-		const uint64_t expected_crc = this->crc();
-		uint64_t observed_crc;
-		(*this)(observed_crc);
-
-		return observed_crc == expected_crc;
-	}
-	uint64_t crc() const { return this->crc_.value(); }
-
-	explicit operator bool() const noexcept { return (bool)this->in; }
-};
+	if constexpr (std::ranges::range<T>)
+		return serialize_strategy_range{};
+	else if constexpr (trivially_serializeable<T>)
+		return serialize_strategy_trivial_copy{};
+	else
+		static_assert(always_false<T>, "Invalid type for (de)serialization");
+}

@@ -2,10 +2,14 @@
 export module diploma.lin_alg;
 import diploma.utility;
 import diploma.thread_pool;
+import diploma.serialization;
 
 import <memory>;
+import <span>;
 
 import "defs.hpp";
+
+
 
 
 
@@ -63,11 +67,15 @@ class tensor
 			else
 				reshape(dims);
 		}
+		std::span<fp> get_data_span() const 
+		{
+			return { data.get(), dims.total() };
+		}
 		void reshape(tensor_dims dims)
 		{
 			this->dims = dims;
 #if TENSOR_USE_DATA_SPAN
-			data_span = { data.get(), dims.total() };
+			data_span = get_data_span();
 #endif
 		}
 	} m;
@@ -142,6 +150,24 @@ public:
 	static tensor from_range(std::initializer_list<fp> r)
 	{
 		return tensor{ init_from_range(r) };
+	}
+
+	void serialize(serializer_t& serializer) const
+	{
+		serializer(m.dims);
+		serializer(m.get_data_span());
+	}
+	bool deserialize(deserializer_t& deserializer)
+	{
+		tensor_dims dims;
+		if (!deserializer(dims))
+			return false;
+		resize_storage(dims);
+
+		auto span = m.get_data_span();
+		deserializer(span);
+
+		return true;
 	}
 
 
@@ -286,5 +312,6 @@ void add(tensor& left, const tensor& right, fp scale, thread_pool& pool)
 	};
 	pool.schedule_split_work(0, left.dims().total(), worker);
 }
+
 
 EXPORT_END

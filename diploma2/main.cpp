@@ -48,7 +48,7 @@ int main()
 	model m;
 
 	auto try_load_model = [&] {
-		std::ifstream fin(model_path);
+		std::ifstream fin(model_path, std::ios::in | std::ios::binary);
 		deserializer_t deserializer(fin);
 
 		uint64_t test_magic{};
@@ -62,10 +62,10 @@ int main()
 		if (!deserializer.test_crc())
 			return false;
 
-		return m.deserialize(deserializer) && deserializer.test_crc() && deserializer;
+		return deserializer(m) && deserializer.test_crc();
 	};
 	auto save_model = [&] {
-		std::ofstream fout(model_path);
+		std::ofstream fout(model_path, std::ios::out | std::ios::binary);
 		serializer_t serializer(fout);
 
 		serializer(serialization_magic);
@@ -73,7 +73,9 @@ int main()
 		serializer(learning_rate_decay_rate);
 		serializer(learning_rate_decay);
 		serializer.write_crc();
-		m.serialize(serializer);
+		serializer(m);
+		serializer.write_crc();
+		xassert(serializer, "Failed to save model");
 	};
 
 
@@ -102,10 +104,10 @@ int main()
 		return result;
 	};
 
-	//auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 20);
-	//auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 500);
-	auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
-	auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
+	auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 20);
+	auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 500);
+	//auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
+	//auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
 
 
 
@@ -152,6 +154,7 @@ int main()
 	{
 		std::println("Creating new model");
 		create_model();
+		save_model();
 		std::println("All parameters set to random values");
 		std::println("All hyperparameters set to default values");
 	}
