@@ -133,18 +133,13 @@ int main()
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{});
 
-		m.add_layer(convolution_layer(5, 5, 20));
-		m.add_layer(pooling_layer{ 2, 2 });
-		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{});
-
 		m.add_layer(flattening_layer{});
 
 		m.add_layer(dense_layer{ 32 });
 		m.add_layer(untied_bias_layer{});
 		m.add_layer(leaky_relu_layer{});
 
-		m.add_layer(dense_layer{ 32 });
+		m.add_layer(dense_layer{ 16 });
 		m.add_layer(untied_bias_layer{});
 		m.add_layer(leaky_relu_layer{});
 
@@ -152,8 +147,8 @@ int main()
 		m.add_layer(untied_bias_layer{});
 		m.add_layer(softmax_layer{});
 
-		//m.finish(mse_loss_function{});
-		m.finish(cross_entropy_loss_function{});
+		m.finish(mse_loss_function{});
+		//m.finish(cross_entropy_loss_function{});
 
 		learning_rate_base = 0.001f;
 		learning_rate_decay_rate = 1.1f;
@@ -184,7 +179,7 @@ int main()
 
 
 	bool should_stop = false;
-	bool should_enter_menu = true;
+	bool should_enter_menu = false;
 
 	auto menu = [&] {
 		cursor_pos_holder cursor;
@@ -192,7 +187,7 @@ int main()
 
 		std::println("Menu:"); ++lines;
 		std::println(" learning rate control: + -");  ++lines;
-		std::println(" batch size control: * /");  ++lines;
+		std::println(" batch size control: * / w s");  ++lines;
 		std::println(" live fitting display control: .");  ++lines;
 		std::println(" exit menu: (space)");  ++lines;
 		std::println(" exit menu for 1 iteration: `");  ++lines;
@@ -206,7 +201,7 @@ int main()
 			};
 #define mutate_var(var, new_val) mutate_var_(#var, var, new_val)
 
-		auto mutate_nearning_rate = [&](int decay_delta) {
+		auto mutate_learning_rate = [&](int decay_delta) {
 			std::print(" learning_rate: {} -> ", learning_rate());
 			learning_rate_decay -= decay_delta;
 			std::println("{}", learning_rate());
@@ -223,12 +218,14 @@ int main()
 			switch (ch)
 			{
 			case 27: mutate_var(should_stop, !should_stop); break;
+			case 'w': mutate_var(batch_size, std::min<size_t>(max_batch_size, batch_size + 10)); break;
+			case 's': mutate_var(batch_size, std::max<size_t>(batch_size, 10) - 10); break;
 			case '*': mutate_var(batch_size, max_batch_size); break;
 			case '/': mutate_var(batch_size, small_batch_size); break;
 			case '.': mutate_var(report_progress, !report_progress); break;
 
-			case '+': mutate_nearning_rate(+1); break;
-			case '-': mutate_nearning_rate(-1); break;
+			case '+': mutate_learning_rate(+1); break;
+			case '-': mutate_learning_rate(-1); break;
 
 			case '`': should_enter_menu = true; [[fallthrough]];
 			case ' ': exit_menu = true; break;

@@ -10,8 +10,8 @@ def count_items_in_dir(path):
 
 def get_dataset_size(root):
 	_num_classes_train = count_items_in_dir(root + "/train")
-	_num_classes_test = count_items_in_dir(root + "/test")
-	assert _num_classes_train == _num_classes_test, "train != test"
+	_num_classes_test = count_items_in_dir(root + "/val")
+	assert _num_classes_train == _num_classes_test, "train != val"
 	return _num_classes_train
 
 dataset_root = "C:/dataset_pneumonia/png8"
@@ -61,13 +61,13 @@ def load_dataset(data_dir):
 	return dataset
 
 train_dataset = load_dataset(dataset_root + "/train")
-test_dataset = load_dataset(dataset_root + "/test")
+val_dataset = load_dataset(dataset_root + "/val")
 
 from keras import backend as K
 K.set_image_data_format("channels_last")
 
 leaky_relu = "relu"
-my_optimizer = tf.keras.optimizers.SGD(learning_rate = 0.0001)
+my_optimizer = tf.keras.optimizers.SGD(learning_rate = 0.001)
 
 model_name = "model2"
 
@@ -88,21 +88,20 @@ except ValueError:
 	model.add(tf.keras.layers.MaxPooling2D((2, 2), data_format='channels_last'))
 	model.add(tf.keras.layers.Conv2D(20, (5, 5), activation=leaky_relu, data_format='channels_last'))
 	model.add(tf.keras.layers.MaxPooling2D((2, 2), data_format='channels_last'))
-	model.add(tf.keras.layers.Conv2D(20, (5, 5), activation=leaky_relu, data_format='channels_last'))
-	model.add(tf.keras.layers.MaxPooling2D((2, 2), data_format='channels_last'))
 	model.add(tf.keras.layers.Flatten())
 	model.add(tf.keras.layers.Dense(32, activation=leaky_relu))
+	model.add(tf.keras.layers.Dense(16, activation=leaky_relu))
 	model.add(tf.keras.layers.Dense(num_classes, activation=leaky_relu))
 	model.compile(loss="mse", optimizer=my_optimizer, metrics=["accuracy"])
 
 print(model.summary())
 
 def get_test_evaluation():
-	test_loss, test_accuracy = model.evaluate(test_dataset)
+	test_loss, test_accuracy = model.evaluate(val_dataset)
 	print(f"Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}")
 
 get_test_evaluation()
-history = model.fit(x=train_dataset, validation_data=test_dataset, epochs=1, steps_per_epoch=1000)
+history = model.fit(x=train_dataset, validation_data=val_dataset, epochs=10, steps_per_epoch=1000)
 get_test_evaluation()
 
 model.save(model_path)

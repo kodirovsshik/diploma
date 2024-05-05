@@ -4,7 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>920f1610-f30f-481f-91b8-b2d9c7899d30</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>tpy_torch.py</StartupFile>
+    <StartupFile>tpy_tf.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
