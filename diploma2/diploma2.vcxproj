@@ -109,6 +109,7 @@
       <FloatingPointModel>Precise</FloatingPointModel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -155,6 +156,7 @@
       <FloatingPointModel>Precise</FloatingPointModel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -170,6 +172,7 @@
     <ClCompile Include="..\tmp\serialization.ixx" />
     <ClCompile Include="..\tmp\thread_pool.ixx" />
     <ClCompile Include="..\tmp\utility.ixx" />
+    <ClCompile Include="conio.ixx" />
     <ClCompile Include="dataset.ixx" />
     <ClCompile Include="data_generator.ixx" />
     <ClCompile Include="image.ixx" />

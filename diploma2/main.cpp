@@ -6,6 +6,7 @@ import diploma.image;
 import diploma.thread_pool;
 import diploma.dataset;
 import diploma.data_generator;
+import diploma.conio;
 
 import <random>;
 import <utility>;
@@ -101,6 +102,8 @@ int main()
 		return result;
 	};
 
+	//auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 20);
+	//auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 500);
 	auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
 	auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
 
@@ -156,7 +159,7 @@ int main()
 
 	const size_t max_batch_size = size(train_dataset);
 	const size_t small_batch_size = std::min<size_t>(200, max_batch_size / 3);
-	size_t batch_size = max_batch_size;
+	size_t batch_size = small_batch_size;
 
 
 
@@ -165,7 +168,7 @@ int main()
 
 
 
-	bool report_progress = false;
+	bool report_progress = true;
 
 
 
@@ -173,12 +176,15 @@ int main()
 	bool should_enter_menu = true;
 
 	auto menu = [&] {
-		std::println("Menu:");
-		std::println(" learning rate control: + -");
-		std::println(" batch size control: * /");
-		std::println(" live fitting display control: .");
-		std::println(" exit menu: (space)");
-		std::println(" exit menu for 1 iteration: `");
+		const auto cursor_start_pos = get_console_pos();
+		size_t lines = 0;
+
+		std::println("Menu:"); ++lines;
+		std::println(" learning rate control: + -");  ++lines;
+		std::println(" batch size control: * /");  ++lines;
+		std::println(" live fitting display control: .");  ++lines;
+		std::println(" exit menu: (space)");  ++lines;
+		std::println(" exit menu for 1 iteration: `");  ++lines;
 
 		should_enter_menu = false;
 
@@ -196,22 +202,35 @@ int main()
 			};
 
 		bool exit_menu = false;
-		while (!exit_menu) switch (_getch())
+		while (!exit_menu)
 		{
-		case 27: mutate_var(should_stop, !should_stop); break;
-		case '*': mutate_var(batch_size, max_batch_size); break;
-		case '/': mutate_var(batch_size, small_batch_size); break;
-		case '.': mutate_var(report_progress, !report_progress); break;
+			cursor_pos_holder _;
 
-		case '+': mutate_nearning_rate(+1); break;
-		case '-': mutate_nearning_rate(-1); break;
+			const auto ch = _getch();
+			clear_line();
 
-		case '`': should_enter_menu = true; std::print("Continuing for 1 iteration - "); [[fallthrough]];
-		case ' ': exit_menu = true; break;
-		//case PAUSE: if (DebuggerAttached()) __debugbreak();
-		default: break;
+			switch (ch)
+			{
+			case 27: mutate_var(should_stop, !should_stop); break;
+			case '*': mutate_var(batch_size, max_batch_size); break;
+			case '/': mutate_var(batch_size, small_batch_size); break;
+			case '.': mutate_var(report_progress, !report_progress); break;
+
+			case '+': mutate_nearning_rate(+1); break;
+			case '-': mutate_nearning_rate(-1); break;
+
+			case '`': should_enter_menu = true; [[fallthrough]];
+			case ' ': exit_menu = true; break;
+			//case PAUSE: if (DebuggerAttached()) __debugbreak();
+			default: break;
+			}
 		}
-		std::println("Exiting menu");
+		set_console_pos(cursor_start_pos);
+		cursor_pos_holder _;
+		for (size_t i = 0; i < lines; ++i)
+		{
+			clear_line(); std::println("");
+		}
 	};
 
 
@@ -224,11 +243,11 @@ int main()
 
 	size_t epochs_passed = 0;
 	const size_t epochs_limit = -1;
-	save_model();
+	const size_t epoch_evaluation_period = 1;
 
 	while (true)
 	{
-		if ((epochs_passed % 1) == 0)
+		if ((epochs_passed % epoch_evaluation_period) == 0)
 		{
 			auto val_stats = m.evaluate(val_dataset, pool);
 			std::println("{:>6}, {:<10.7f}, {:<7.4f}, {:<10.7f}, {:<7.4f}", epochs_passed, last_train_loss, last_train_acc, val_stats.loss, val_stats.accuracy);
@@ -239,6 +258,8 @@ int main()
 				best_val_loss = val_stats.loss;
 			}
 		}
+
+		if (epochs_passed == epochs_limit) break;
 
 		while (_kbhit()) if (_getch() == ' ') should_enter_menu = true;
 		
@@ -254,7 +275,6 @@ int main()
 
 		dt_sum += t2 - t1;
 		++epochs_passed;
-		if (epochs_passed == epochs_limit) break;
 	}
 
 	std::print("{}s/epoch\n", dt_sum.count() * 1e-9 / epochs_passed);

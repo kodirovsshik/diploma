@@ -7,6 +7,7 @@ import diploma.thread_pool;
 import diploma.image;
 import diploma.dataset;
 import diploma.serialization;
+import diploma.conio;
 
 import libksn.type_traits;
 
@@ -122,47 +123,6 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 			kernel_id = output_image_id * input_images_count + input_image_id;
 		}
 	}
-
-	//auto do_kernels = [&](size_t out_image, size_t first_input_image, size_t kernels_begin, size_t kernels_todo)
-	//{
-	//	auto do_output_element = [&](size_t y, size_t x) {
-	//			const size_t n_begin = inner_convolution ? 0 : std::max(kernel_x_offset, x) - x;
-	//			const size_t m_begin = inner_convolution ? 0 : std::max(kernel_y_offset, y) - y;
-	//			const size_t n_end = inner_convolution ? kernel_width : std::min(kernel_width, input_width + kernel_x_offset - x);
-	//			const size_t m_end = inner_convolution ? kernel_height : std::min(kernel_height, input_height + kernel_y_offset - y);
-	//			fp val = 0;
-	//			for (size_t m = m_begin; m < m_end; ++m)
-	//				for (size_t n = n_begin; n < n_end; ++n)
-	//				{
-	//					const size_t in_y = y + m - kernel_y_offset;
-	//					const size_t in_x = x + n - kernel_x_offset;
-	//					val += input(in_y, in_x, input_image_id) * kernel_at(m, n, kernel_id);
-	//				}
-	//			output(y, x, out_image) += val;
-	//		};
-	//		for (size_t y = 0; y < output_height; ++y)
-	//			for (size_t x = 0; x < output_width; ++x)
-	//				do_output_element(y, x);
-	//};
-	//if constexpr (as_product)
-	//{
-	//	size_t input_image = 0, kernel_id = 0;
-	//	for (size_t kernel_id = 0; kernel_id < kernel_count; ++kernel_id)
-	//	{
-	//		for (size_t input_image = 0; input_image < input_images_count; ++input_image)
-	//		{
-	//			do_kernels(kernel_id * input_images_count + input_image, input_image, kernel_id, kernel_id + 1);
-	//		}
-	//	}
-	//}
-	//else
-	//{
-	//	for (size_t out_image = 0; out_image < output_images_count; ++out_image)
-	//	{
-	//		const size_t first_kernel = out_image * input_images_count;
-	//		do_kernels(out_image, 0, first_kernel, input_images_count);
-	//	}
-	//}
 }
 
 
@@ -869,7 +829,7 @@ public:
 			{
 				const auto& [input, expected] = at(dataset, i);
 				accumulate_gradient_single(input, expected, states[thread_id].dLdparams, states[thread_id].stats);
-				if (report && thread_id == 0) std::println("fit: {}/{}", i, end - begin);
+				if (report && thread_id == 0) { cursor_pos_holder _; std::println("fit: {}/{}", i, end - begin); }
 			}
 		};
 		pool.schedule_split_work(0, batch_size, worker);

@@ -57,6 +57,9 @@
     <ClCompile Include="image.ixx">
       <Filter>Module Files</Filter>
     </ClCompile>
+    <ClCompile Include="conio.ixx">
+      <Filter>Module Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\tmp\defs.hpp">
