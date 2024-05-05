@@ -95,8 +95,6 @@ int main()
 
 
 
-	auto datagen_func = gen_data_pair_circle_square;
-
 	auto load_dataset = [&]<class DatasetType>(tag_holder<DatasetType>, const char* type, auto&& ...args) {
 		std::print("Loading {} dataset... ", type);
 		auto result = DatasetType(std::forward<decltype(args)>(args)...);
@@ -104,27 +102,38 @@ int main()
 		return result;
 	};
 
-	auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 20);
-	auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 500);
-	//auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
-	//auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
+	auto datagen_func = gen_data_pair_circle_square;
+	//auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 20);
+	//auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 500);
+	auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
+	auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
 
 
 
 	auto create_model = [&] {
 		m.set_input_size(input_size(train_dataset));
 
-		m.add_layer(convolution_layer(3, 3, 16));
+		m.add_layer(convolution_layer(5, 5, 10));
 		m.add_layer(pooling_layer{ 2, 2 });
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{});
 
-		m.add_layer(convolution_layer(3, 3, 16));
+		m.add_layer(convolution_layer(5, 5, 20));
 		m.add_layer(pooling_layer{ 2, 2 });
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{});
 
-		m.add_layer(convolution_layer(3, 3, 16));
+		m.add_layer(convolution_layer(5, 5, 20));
+		m.add_layer(pooling_layer{ 2, 2 });
+		m.add_layer(tied_bias_layer{});
+		m.add_layer(leaky_relu_layer{});
+
+		m.add_layer(convolution_layer(5, 5, 20));
+		m.add_layer(pooling_layer{ 2, 2 });
+		m.add_layer(tied_bias_layer{});
+		m.add_layer(leaky_relu_layer{});
+
+		m.add_layer(convolution_layer(5, 5, 20));
 		m.add_layer(pooling_layer{ 2, 2 });
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{});
@@ -154,14 +163,13 @@ int main()
 	{
 		std::println("Creating new model");
 		create_model();
-		save_model();
 		std::println("All parameters set to random values");
 		std::println("All hyperparameters set to default values");
 	}
 
 
 	const size_t max_batch_size = size(train_dataset);
-	const size_t small_batch_size = std::min<size_t>(200, max_batch_size / 3);
+	const size_t small_batch_size = std::min<size_t>(500, max_batch_size / 3);
 	size_t batch_size = small_batch_size;
 
 
@@ -179,7 +187,7 @@ int main()
 	bool should_enter_menu = true;
 
 	auto menu = [&] {
-		const auto cursor_start_pos = get_console_pos();
+		cursor_pos_holder cursor;
 		size_t lines = 0;
 
 		std::println("Menu:"); ++lines;
@@ -228,8 +236,8 @@ int main()
 			default: break;
 			}
 		}
-		set_console_pos(cursor_start_pos);
-		cursor_pos_holder _;
+
+		cursor.restore();
 		for (size_t i = 0; i < lines; ++i)
 		{
 			clear_line(); std::println("");
@@ -248,11 +256,17 @@ int main()
 	const size_t epochs_limit = -1;
 	const size_t epoch_evaluation_period = 1;
 
+	cursor_pos_holder cursor{ cursor_pos_holder::noacquire };
+
 	while (true)
 	{
 		if ((epochs_passed % epoch_evaluation_period) == 0)
 		{
+			cursor.acquire();
+			std::print("Evaluating...");
 			auto val_stats = m.evaluate(val_dataset, pool);
+			cursor.release();
+
 			std::println("{:>6}, {:<10.7f}, {:<7.4f}, {:<10.7f}, {:<7.4f}", epochs_passed, last_train_loss, last_train_acc, val_stats.loss, val_stats.accuracy);
 			if (val_stats.loss < best_val_loss)
 			{

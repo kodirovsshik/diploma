@@ -32,12 +32,37 @@ point2hi get_console_pos()
 	return { .x = cbsi.dwCursorPosition.X, .y = cbsi.dwCursorPosition.Y };
 }
 
+
 class cursor_pos_holder
 {
-	point2hi pos;
+	point2hi pos{};
+	bool has_data = false;
+
 public:
-	cursor_pos_holder() : pos(get_console_pos()) {}
-	~cursor_pos_holder() { set_console_pos(pos); }
+	struct noacquire_t {} static constexpr noacquire;
+
+	cursor_pos_holder(noacquire_t) {}
+	cursor_pos_holder() { acquire(); }
+	~cursor_pos_holder() { release(); }
+
+	void acquire()
+	{
+		xassert(!has_data, "already acquired");
+		pos = get_console_pos();
+		has_data = true;
+	}
+	void restore()
+	{
+		xassert(has_data, "nothing to restore");
+		set_console_pos(pos);
+	}
+	void release()
+	{
+		if (!has_data)
+			return;
+		restore();
+		has_data = false;
+	}
 };
 
 void clear_line()

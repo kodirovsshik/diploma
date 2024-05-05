@@ -889,7 +889,7 @@ public:
 			{
 				const auto& [input, expected] = at(dataset, i);
 				accumulate_gradient_single(input, expected, states[thread_id].dLdparams, states[thread_id].stats);
-				if (report && thread_id == 0) { cursor_pos_holder _; std::println("fit: {}/{}", i, end - begin); }
+				if (report && thread_id == 0) { cursor_pos_holder _; std::println("fit: {}/{}", i + 1, end - begin); }
 			}
 		};
 		pool.schedule_split_work(0, batch_size, worker);
