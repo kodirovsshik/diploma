@@ -45,6 +45,7 @@ int main()
 	static constexpr uint64_t serialization_magic = 0xC5DA6D48C547CDEC;
 
 	model m;
+
 	auto try_load_model = [&] {
 		std::ifstream fin(model_path);
 		deserializer_t deserializer(fin);
@@ -57,7 +58,8 @@ int main()
 		deserializer(learning_rate_base);
 		deserializer(learning_rate_decay_rate);
 		deserializer(learning_rate_decay);
-		deserializer.test_crc();
+		if (!deserializer.test_crc())
+			return false;
 
 		return m.deserialize(deserializer) && deserializer.test_crc() && deserializer;
 	};
@@ -163,19 +165,32 @@ int main()
 
 
 
-	bool should_exit = false;
+	bool report_progress = false;
+
+
+
+	bool should_stop = false;
+	bool should_enter_menu = true;
+
 	auto menu = [&] {
-		std::print("Menu:\n learning rate control: + -\n batch size control: * /\n");
+		std::println("Menu:");
+		std::println(" learning rate control: + -");
+		std::println(" batch size control: * /");
+		std::println(" live fitting display control: .");
+		std::println(" exit menu: (space)");
+		std::println(" exit menu for 1 iteration: `");
+
+		should_enter_menu = false;
 
 		auto mutate_var_ = [&](const char* name, auto& val, auto new_val)
 			{
-				std::print("{}: {} -> ", name, val);
+				std::print(" {}: {} -> ", name, val);
 				std::print("{}\n", val = new_val);
 			};
 #define mutate_var(var, new_val) mutate_var_(#var, var, new_val)
 
 		auto mutate_nearning_rate = [&](int decay_delta) {
-			std::print("learning_rate: {} -> ", learning_rate());
+			std::print(" learning_rate: {} -> ", learning_rate());
 			learning_rate_decay -= decay_delta;
 			std::println("{}", learning_rate());
 			};
@@ -183,18 +198,21 @@ int main()
 		bool exit_menu = false;
 		while (!exit_menu) switch (_getch())
 		{
-		case 27: mutate_var(should_exit, !should_exit); break;
+		case 27: mutate_var(should_stop, !should_stop); break;
 		case '*': mutate_var(batch_size, max_batch_size); break;
 		case '/': mutate_var(batch_size, small_batch_size); break;
+		case '.': mutate_var(report_progress, !report_progress); break;
 
 		case '+': mutate_nearning_rate(+1); break;
 		case '-': mutate_nearning_rate(-1); break;
 
+		case '`': should_enter_menu = true; std::print("Continuing for 1 iteration - "); [[fallthrough]];
 		case ' ': exit_menu = true; break;
 		//case PAUSE: if (DebuggerAttached()) __debugbreak();
 		default: break;
 		}
-		};
+		std::println("Exiting menu");
+	};
 
 
 
@@ -202,7 +220,7 @@ int main()
 	std::println("epochs_passed, train_loss, train_acc, val_loss, val_acc:");
 
 	fp last_train_acc = 0, last_train_loss = 0;
-	fp top_val_acc = 0;
+	fp best_val_loss = INFINITY;
 
 	size_t epochs_passed = 0;
 	const size_t epochs_limit = -1;
@@ -212,25 +230,27 @@ int main()
 	{
 		if ((epochs_passed % 1) == 0)
 		{
-			auto stats = m.evaluate(val_dataset, pool);
-			std::println("{:>6}, {:<7.4f}, {:<7.4f}, {:<7.4f}, {:<7.4f}", epochs_passed, last_train_loss, last_train_acc, stats.loss, stats.accuracy);
-			if (stats.accuracy > top_val_acc)
+			auto val_stats = m.evaluate(val_dataset, pool);
+			std::println("{:>6}, {:<10.7f}, {:<7.4f}, {:<10.7f}, {:<7.4f}", epochs_passed, last_train_loss, last_train_acc, val_stats.loss, val_stats.accuracy);
+			if (val_stats.loss < best_val_loss)
 			{
 				if (epochs_passed != 0)
 					save_model();
-				top_val_acc = stats.accuracy;
+				best_val_loss = val_stats.loss;
 			}
 		}
 
-		while (_kbhit()) if (_getch() == ' ') menu();
-		if (should_exit) break;
+		while (_kbhit()) if (_getch() == ' ') should_enter_menu = true;
+		
+		if (should_enter_menu) menu();
+		if (should_stop) break;
 
 		auto t1 = xclock();
-		auto stats = m.fit(train_dataset, pool, learning_rate(), batch_size);
+		auto train_stats = m.fit(train_dataset, pool, learning_rate(), batch_size, report_progress);
 		auto t2 = xclock();
 
-		last_train_acc = stats.accuracy;
-		last_train_loss = stats.loss;
+		last_train_acc = train_stats.accuracy;
+		last_train_loss = train_stats.loss;
 
 		dt_sum += t2 - t1;
 		++epochs_passed;

@@ -849,7 +849,7 @@ public:
 	};
 
 	template<dataset_wrapper Dataset>
-	model_statistics fit(Dataset& dataset, thread_pool& pool, fp learning_rate, size_t batch_size = SIZE_MAX)
+	model_statistics fit(Dataset& dataset, thread_pool& pool, fp learning_rate, size_t batch_size = SIZE_MAX, bool report = false)
 	{
 		assert_is_finished();
 
@@ -869,8 +869,7 @@ public:
 			{
 				const auto& [input, expected] = at(dataset, i);
 				accumulate_gradient_single(input, expected, states[thread_id].dLdparams, states[thread_id].stats);
-				//if (thread_id == 0) std::println("fit: {}/{}", i, end - begin);
-				// ^^^ Uncomment for progress reporting
+				if (report && thread_id == 0) std::println("fit: {}/{}", i, end - begin);
 			}
 		};
 		pool.schedule_split_work(0, batch_size, worker);
