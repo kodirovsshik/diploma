@@ -14,7 +14,7 @@ EXPORT_BEGIN
 
 std::mt19937_64 datagen_rng(rng_seed);
 
-const size_t shapes_tensor_size = 100;
+const size_t shapes_tensor_size = 200;
 
 struct vec2
 {
@@ -209,6 +209,16 @@ dataset_pair gen_data_pair_sum()
 	const auto in = tensor::from_range({ x, y });
 	const auto label = tensor::from_range({ x + y });
 	return { in, label };
+}
+
+dataset_pair gen_data_pair_empty()
+{
+	tensor a(shapes_tensor_size, shapes_tensor_size);
+	randomize_range(a, 0, 1);
+
+	tensor b(2);
+	b[random(0, 1)] = 1;
+	return { a, b };
 }
 
 class stub_dataset

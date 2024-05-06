@@ -26,12 +26,12 @@ constexpr size_t rng_seed_index = 0;
 const size_t rng_seed = std::hash<size_t>{}(rng_seed_index);
 
 
-template<class T, class R>
-void randomize_range(R&& range, T from, T to)
+template<class R>
+void randomize_range(R&& range, std::ranges::range_value_t<R> from, std::ranges::range_value_t<R> to)
 {
 	static thread_local std::mt19937_64 thread_rng(rng_seed);
 
-	std::uniform_real_distribution<T> distr(from, to);
+	std::uniform_real_distribution<std::ranges::range_value_t<R>> distr(from, to);
 	for (auto&& x : range)
 		x = distr(thread_rng);
 }

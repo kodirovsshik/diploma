@@ -18,6 +18,8 @@ import <unordered_map>;
 
 import "defs.hpp";
 
+import <immintrin.h>;
+
 
 
 
@@ -40,11 +42,46 @@ tensor_dims calculate_convolution_output_dims(tensor_dims in, tensor_dims kernel
 	};
 }
 
+template<size_t N>
+using size_constant = std::integral_constant<size_t, N>;
+
+template<size_t N>
+__m256i get_load_mask()
+{
+	__m256i result{};
+	for (size_t i = 0; i < N; ++i)
+		result.m256i_u32[i] = -1;
+	return result;
+}
+template<size_t N>
+consteval int get_mirror_permutation1()
+{
+	static_assert(N <= 4);
+	static_assert(N > 0);
+
+	int x = 0;
+	for (int i = 0; i < (int)N; ++i)
+	{
+		x += (N - 1 - i) << (2 * i);
+	}
+	return x;
+}
+template<size_t N>
+fp ymm_accumulate(__m256 ymm)
+{
+	static_assert(N >= 1 && N <= 8);
+	if constexpr (N > 1) ymm = _mm256_hadd_ps(ymm, _mm256_setzero_ps());
+	if constexpr (N > 2) ymm = _mm256_hadd_ps(ymm, _mm256_setzero_ps());
+	if constexpr (N > 4) ymm = _mm256_hadd_ps(ymm, _mm256_setzero_ps());
+	return ymm.m256_f32[0];
+}
+
 export template<bool outer_convolution = false, bool as_product = false>
 void perform_full_convolution(const tensor& input, const tensor& kernels, tensor& output)
 {
 	static_assert(!outer_convolution || !as_product);
 	constexpr static bool inner_convolution = !outer_convolution;
+	constexpr static bool mirror_kernel = outer_convolution;
 
 	const auto [kernel_height, kernel_width, kernel_count] = kernels.dims();
 	const auto [input_height, input_width, input_images_count] = input.dims();
@@ -55,10 +92,10 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 	const size_t kernel_y_offset = inner_convolution ? 0 : kernel_height - 1;
 
 	auto kernel_idx_projection = [](size_t x, size_t sz) {
-		if constexpr (inner_convolution)
-			return x;
-		else
+		if constexpr (mirror_kernel)
 			return sz - 1 - x;
+		else
+			return x;
 	};
 	auto kernel_at = [&](size_t y, size_t x, size_t kernel_id) {
 		return kernels(
@@ -71,36 +108,120 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 	output.resize_clear_storage({ output_height, output_width, output_images_count });
 
 	size_t kernel_id = 0, input_image_id = 0, output_image_id = 0;
-
+	
 	while (true)
 	{
 		//convolution strategy:
 
-		for (size_t kernel_y = 0; kernel_y < kernel_height; ++kernel_y)
+		auto do_output_element = [&]<bool fully_in_bounds>(std::bool_constant<fully_in_bounds>, size_t output_y, size_t output_x)
 		{
-			const size_t output_y_begin = std::max(kernel_y_offset, kernel_y) - kernel_y;
-			const size_t output_y_end = std::min(output_height, input_height + kernel_y_offset - kernel_y);
-
-			for (size_t output_y = output_y_begin; output_y < output_y_end; ++output_y)
-			{
-				const size_t input_y = output_y + kernel_y - kernel_y_offset;
-				
-				for (size_t output_x = 0; output_x < output_width; ++output_x)
+			auto get_coord_bounds = [](size_t input_size, size_t output_coord, size_t kernel_offset, size_t kernel_size) -> std::pair<size_t, size_t> {
+				if constexpr (fully_in_bounds)
 				{
-					auto& out = output(output_y, output_x, output_image_id);
+					return { 0, kernel_size };
+				}
+				else
+				{
+					const size_t min = std::max<size_t>(kernel_offset, output_coord) - output_coord;
+					const size_t max = std::min<size_t>(input_size + kernel_offset - output_coord, kernel_size);
+					return { min, max };
+				}
+			};
 
-					const size_t kernel_x_begin = std::max(output_x, kernel_x_offset) - output_x;
-					const size_t kernel_x_end = std::min(input_width + kernel_x_offset - output_x, kernel_width);
+			auto& out = output(output_y, output_x, output_image_id);
 
-					for (size_t kernel_x = kernel_x_begin; kernel_x < kernel_x_end; ++kernel_x)
+			auto apply_kernel_default = [&] {
+				const auto [n_begin, n_end] = get_coord_bounds(input_height, output_y, kernel_y_offset, kernel_height);
+				const auto [m_begin, m_end] = get_coord_bounds(input_width, output_x, kernel_x_offset, kernel_width);
+
+				fp val = 0;
+				for (size_t n = n_begin; n < n_end; ++n)
+				{
+					for (size_t m = m_begin; m < m_end; ++m)
 					{
-						const size_t input_x = output_x + kernel_x - kernel_x_offset;
-						out += input(input_y, input_x, input_image_id) * kernel_at(kernel_y, kernel_x, kernel_id);
+						const size_t in_y = output_y + n - kernel_y_offset;
+						const size_t in_x = output_x + m - kernel_x_offset;
+						val += input(in_y, in_x, input_image_id) * kernel_at(n, m, kernel_id);
 					}
 				}
+				out += val;
+			};
+
+			if constexpr (!fully_in_bounds)
+				apply_kernel_default();
+			else
+			{
+				auto apply_kernel_simd = [&]<size_t kh, size_t kw>(size_constant<kh>, size_constant<kw>)
+				{
+					const float* pk = &kernels(mirror_kernel ? kernel_height - 1 : 0, 0, kernel_id);
+					const float* pi = &input(output_y - kernel_y_offset, output_x - kernel_x_offset, input_image_id);
+
+					const auto load_mask = get_load_mask<kw>();
+					const auto mirror_permutation = [] { if constexpr (kw <= 4) return get_mirror_permutation1<kw>(); else return __m256i{}; }();
+
+					__m256 accumulator = _mm256_setzero_ps();
+
+					for (size_t ky = 0; ky < kh; ++ky)
+					{
+						__m256 kernel_data = _mm256_maskload_ps(pk, load_mask);
+						if constexpr (mirror_kernel && kw > 4)
+						{
+							__debugbreak();
+						}
+						else if constexpr (mirror_kernel && kw <= 4)
+						{
+							kernel_data = _mm256_permute_ps(kernel_data, mirror_permutation);
+						}
+
+						accumulator = _mm256_fmadd_ps(
+							_mm256_maskload_ps(pi, load_mask), kernel_data, accumulator
+						);
+
+						pi += input_width;
+						if constexpr (mirror_kernel)
+							pk -= kernel_width;
+						else
+							pk += kernel_width;
+					}
+
+					out += ymm_accumulate<kw>(accumulator);
+				};
+
+#define cover_kernel_size(w, h) else if (kernel_width == (w) && kernel_height == (h)) { apply_kernel_simd(size_constant<(h)>{}, size_constant<(w)>{}); }
+#define repeat_call_arg2iota(f, x) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7) f(x, 8)
+#define repeat_call_arg2iota1
+#define repeat_call_arg2iota2
+
+				if (false) {}
+				//repeat_call_arg2iota(repeat_call_arg2iota, cover_kernel_size)
+				//I don't know how to make it work so here it is, evaluated once manually
+				repeat_call_arg2iota(cover_kernel_size, 1) repeat_call_arg2iota(cover_kernel_size, 2) repeat_call_arg2iota(cover_kernel_size, 3) repeat_call_arg2iota(cover_kernel_size, 4) repeat_call_arg2iota(cover_kernel_size, 5) repeat_call_arg2iota(cover_kernel_size, 6) repeat_call_arg2iota(cover_kernel_size, 7) repeat_call_arg2iota(cover_kernel_size, 8)
+				else apply_kernel_default();
+			}
+		};
+
+		auto kernel_fully_in_bounds_1d = [](size_t input_size, size_t output_coord, size_t kernel_offset, size_t kernel_size) {
+			if constexpr (inner_convolution)
+				return true;
+			else
+				return output_coord >= kernel_offset && output_coord + kernel_size < input_size + kernel_offset + 1;
+		};
+
+		for (size_t output_y = 0; output_y < output_height; ++output_y)
+		{
+			const bool in_bounds_y = kernel_fully_in_bounds_1d(input_height, output_y, kernel_y_offset, kernel_height);
+
+			for (size_t output_x = 0; output_x < output_width; ++output_x)
+			{
+				const bool fully_in_bounds = in_bounds_y && kernel_fully_in_bounds_1d(input_width, output_x, kernel_x_offset, kernel_width);
+				
+				if (fully_in_bounds)
+					do_output_element(std::true_type{}, output_y, output_x);
+				else
+					do_output_element(std::false_type{}, output_y, output_x);
 			}
 		}
-
+		
 
 		//index progression strategy:
 
@@ -287,7 +408,7 @@ class dense_layer
 		xassert(input_dims.width == 1 && input_dims.depth == 1, "Dense layer takes Nx1x1 tensor as input");
 
 		data.resize_storage({ output_height, input_dims.height, 1 });
-		randomize_range<fp>(data, -rng_range, rng_range);
+		randomize_range(data, -rng_range, rng_range);
 		return { output_height, 1, 1 };
 	}
 
@@ -869,7 +990,7 @@ public:
 	};
 
 	template<dataset_wrapper Dataset>
-	model_statistics fit(Dataset& dataset, thread_pool& pool, fp learning_rate, size_t batch_size = SIZE_MAX, bool report = false)
+	model_statistics fit(Dataset& dataset, thread_pool& pool, fp learning_rate, size_t batch_size = SIZE_MAX, bool should_report_progress = false)
 	{
 		assert_is_finished();
 
@@ -880,16 +1001,23 @@ public:
 		{
 			std::vector<tensor> dLdparams;
 			model_statistics stats{};
+			bool used = false;
 		};
 		std::vector<thread_state> states(pool.size(), { std::vector<tensor>{ m.layers.size() }});
 
+		cursor_pos_holder cursor;
 		//TODO: test new thread_pool API vs old one
 		auto worker = [&](size_t thread_id, size_t begin, size_t end) {
+			auto report = [&](size_t n) { if (should_report_progress && thread_id == 0) { cursor.restore(); std::print("fit: {}/{}", n, end - begin); }};
+
+			states[thread_id].used = true;
+
+			report(0);
 			for (size_t i = begin; i < end; ++i)
 			{
 				const auto& [input, expected] = at(dataset, i);
 				accumulate_gradient_single(input, expected, states[thread_id].dLdparams, states[thread_id].stats);
-				if (report && thread_id == 0) { cursor_pos_holder _; std::println("fit: {}/{}", i + 1, end - begin); }
+				report(i + 1);
 			}
 		};
 		pool.schedule_split_work(0, batch_size, worker);
@@ -899,6 +1027,8 @@ public:
 
 		for (size_t j = 0; j < states.size(); ++j)
 		{
+			if (!states[j].used)
+				continue;
 			for (size_t i = 0; i < m.layers.size(); ++i)
 				adjust_layer_parameters(m.layers[i], states[j].dLdparams[i], scale, pool);
 			pool.barrier();

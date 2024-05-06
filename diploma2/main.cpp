@@ -18,20 +18,27 @@ import "defs.hpp";
 template<class tag>
 struct tag_holder {};
 
+void main1()
+{
+	auto img = tensor::from_range({ 0,1,2,3,1,2,3,4,2,3,4,5,3,4,5,6 });
+	auto kernel = tensor::from_range({ -1,0,1,-2,0,2,-3,0,3 });
+	img.reshape({ 4,4,1 });
+	kernel.reshape({ 3,3,1 });
+
+	tensor out;
+	perform_full_convolution(img, kernel, out);
+}
+
 int main()
 {
-
-	const auto xclock = std::chrono::steady_clock::now;
-	decltype(xclock() - xclock()) dt_sum{};
-
-
+	//main1(); return 0;
 
 	thread_pool pool;
 
 
 
 	cpath dataset_root = R"(C:\dataset_pneumonia\bmp)";
-	cpath model_path = dataset_root / "model.bin";
+	cpath model_path = dataset_root / "model1.bin";
 
 
 
@@ -103,56 +110,33 @@ int main()
 	};
 
 	auto datagen_func = gen_data_pair_circle_square;
-	//auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 20);
-	//auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 500);
-	auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
-	auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
+	//auto datagen_func = gen_data_pair_empty;
+	auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 10);
+	auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 50);
+	//auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
+	//auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
 
 
 
+	auto set_default_learning_rate = [&] {
+		learning_rate_base = 0.001f;
+		learning_rate_decay_rate = 1.1f;
+		learning_rate_decay = 0;
+	};
 	auto create_model = [&] {
 		m.set_input_size(input_size(train_dataset));
 
 		m.add_layer(convolution_layer(5, 5, 10));
-		m.add_layer(pooling_layer{ 2, 2 });
-		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{});
-
-		m.add_layer(convolution_layer(5, 5, 20));
-		m.add_layer(pooling_layer{ 2, 2 });
-		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{});
-
-		m.add_layer(convolution_layer(5, 5, 20));
-		m.add_layer(pooling_layer{ 2, 2 });
-		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{});
-
-		m.add_layer(convolution_layer(5, 5, 20));
-		m.add_layer(pooling_layer{ 2, 2 });
-		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{});
+		m.add_layer(convolution_layer(5, 5, 10));
+		m.add_layer(convolution_layer(5, 5, 10));
+		m.add_layer(pooling_layer(10, 10));
 
 		m.add_layer(flattening_layer{});
-
-		m.add_layer(dense_layer{ 32 });
-		m.add_layer(untied_bias_layer{});
-		m.add_layer(leaky_relu_layer{});
-
-		m.add_layer(dense_layer{ 16 });
-		m.add_layer(untied_bias_layer{});
-		m.add_layer(leaky_relu_layer{});
-
 		m.add_layer(dense_layer{ 2 });
-		m.add_layer(untied_bias_layer{});
-		m.add_layer(softmax_layer{});
 
 		m.finish(mse_loss_function{});
-		//m.finish(cross_entropy_loss_function{});
 
-		learning_rate_base = 0.001f;
-		learning_rate_decay_rate = 1.1f;
-		learning_rate_decay = 0;
+		set_default_learning_rate();
 	};
 	if (m.get_layer_count() == 0)
 	{
@@ -165,7 +149,7 @@ int main()
 
 	const size_t max_batch_size = size(train_dataset);
 	const size_t small_batch_size = std::min<size_t>(500, max_batch_size / 3);
-	size_t batch_size = small_batch_size;
+	size_t batch_size = max_batch_size;
 
 
 
@@ -244,34 +228,52 @@ int main()
 
 
 	std::println("Training is running on {} thread{}", pool.size(), pool.size() == 1 ? "" : "s");
-	std::println("epochs_passed, train_loss, train_acc, val_loss, val_acc:");
 
-	fp last_train_acc = 0, last_train_loss = 0;
+	auto tui_bar = [] { std::println("{:-<49}", ""); };
+	
+	tui_bar();
+	std::println("      |      train         |     validation     |");
+	std::println("epoch | loss      | acc    | loss      | acc    |");
+	tui_bar();
+
+	using stats_t = model::model_statistics;
+	stats_t last_train_stats{}, last_val_stats{};
 	fp best_val_loss = INFINITY;
 
 	size_t epochs_passed = 0;
-	const size_t epochs_limit = -1;
-	const size_t epoch_evaluation_period = 1;
+	const size_t epochs_limit = 5;
+	const size_t epoch_evaluation_period = 0;
+
+	auto print_stats = [&](stats_t stats) {
+		std::print(" {:>10.7f}| {:>7.4f}|", stats.loss, stats.accuracy);
+	};
 
 	cursor_pos_holder cursor{ cursor_pos_holder::noacquire };
 
+	const auto xclock = std::chrono::steady_clock::now;
+	decltype(xclock() - xclock()) dt_sum{};
+
 	while (true)
 	{
-		if ((epochs_passed % epoch_evaluation_period) == 0)
+		if (epoch_evaluation_period && (epochs_passed % epoch_evaluation_period) == 0)
 		{
 			cursor.acquire();
 			std::print("Evaluating...");
-			auto val_stats = m.evaluate(val_dataset, pool);
+			last_val_stats = m.evaluate(val_dataset, pool);
 			cursor.release();
 
-			std::println("{:>6}, {:<10.7f}, {:<7.4f}, {:<10.7f}, {:<7.4f}", epochs_passed, last_train_loss, last_train_acc, val_stats.loss, val_stats.accuracy);
-			if (val_stats.loss < best_val_loss)
+			if (last_val_stats.loss < best_val_loss)
 			{
 				if (epochs_passed != 0)
 					save_model();
-				best_val_loss = val_stats.loss;
+				best_val_loss = last_val_stats.loss;
 			}
 		}
+
+		std::print("{:>6}|", epochs_passed);
+		print_stats(last_train_stats);
+		print_stats(last_val_stats);
+		std::println("");
 
 		if (epochs_passed == epochs_limit) break;
 
@@ -281,15 +283,13 @@ int main()
 		if (should_stop) break;
 
 		auto t1 = xclock();
-		auto train_stats = m.fit(train_dataset, pool, learning_rate(), batch_size, report_progress);
+		last_train_stats = m.fit(train_dataset, pool, learning_rate(), batch_size, report_progress);
 		auto t2 = xclock();
-
-		last_train_acc = train_stats.accuracy;
-		last_train_loss = train_stats.loss;
 
 		dt_sum += t2 - t1;
 		++epochs_passed;
 	}
 
+	tui_bar();
 	std::print("{}s/epoch\n", dt_sum.count() * 1e-9 / epochs_passed);
 }
