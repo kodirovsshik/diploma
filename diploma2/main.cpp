@@ -20,10 +20,15 @@ struct tag_holder {};
 
 void main1()
 {
-	auto img = tensor::from_range({ 0,1,2,3,1,2,3,4,2,3,4,5,3,4,5,6 });
-	auto kernel = tensor::from_range({ -1,0,1,-2,0,2,-3,0,3 });
-	img.reshape({ 4,4,1 });
-	kernel.reshape({ 3,3,1 });
+	const size_t Ni = 10, Nk = 5;
+	tensor img(Ni, Ni), kernel(Nk, Nk);
+
+	for (size_t y = 0; y < Ni; ++y)
+		for (size_t x = 0; x < Ni; ++x)
+			img(y, x) = fp(y + x);
+	for (size_t y = 0; y < Nk; ++y)
+		for (size_t x = 0; x < Nk; ++x)
+			kernel(y, x) = (y + 1) * ((fp)2 * x / (Nk - 1) - 1);
 
 	tensor out;
 	perform_full_convolution(img, kernel, out);
@@ -31,14 +36,14 @@ void main1()
 
 int main()
 {
-	//main1(); return 0;
+	main1(); return 0;
 
 	thread_pool pool;
 
 
 
 	cpath dataset_root = R"(C:\dataset_pneumonia\bmp)";
-	cpath model_path = dataset_root / "model1.bin";
+	cpath model_path = dataset_root / "model.bin";
 
 
 
@@ -98,6 +103,7 @@ int main()
 	{
 		std::println("failure");
 		std::println("New model will be created");
+		return -1;
 	}
 
 
@@ -109,12 +115,11 @@ int main()
 		return result;
 	};
 
-	auto datagen_func = gen_data_pair_circle_square;
-	//auto datagen_func = gen_data_pair_empty;
-	auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 10);
-	auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 50);
-	//auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
-	//auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
+	//auto datagen_func = gen_data_pair_circle_square;
+	//auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 10);
+	//auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 50);
+	auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
+	auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
 
 
 

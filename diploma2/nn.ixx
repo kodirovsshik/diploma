@@ -1,4 +1,7 @@
 
+module;
+#include <immintrin.h>
+
 export module diploma.nn;
 
 import diploma.lin_alg;
@@ -11,14 +14,13 @@ import diploma.conio;
 
 import libksn.type_traits;
 
+
 import <variant>;
 import <memory>;
 import <filesystem>;
 import <unordered_map>;
 
 import "defs.hpp";
-
-import <immintrin.h>;
 
 
 
@@ -45,13 +47,16 @@ tensor_dims calculate_convolution_output_dims(tensor_dims in, tensor_dims kernel
 template<size_t N>
 using size_constant = std::integral_constant<size_t, N>;
 
+#define repeat_call_arg2iota8(f, x) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7) f(x, 8)
+#define repeat_call_arg2iota8_1(f, x) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7) f(x, 8)
+
 template<size_t N>
-__m256i get_load_mask()
+constexpr __m256i get_load_mask()
 {
-	__m256i result{};
-	for (size_t i = 0; i < N; ++i)
-		result.m256i_u32[i] = -1;
-	return result;
+	static_assert(N <= 8);
+	static_assert(N > 0);
+#define __f(i) ((i < N) ? -1 : 0)
+	return _mm256_set_epi32(__f(7), __f(6), __f(5), __f(4), __f(3), __f(2), __f(1), __f(0));
 }
 template<size_t N>
 consteval int get_mirror_permutation1()
@@ -67,13 +72,23 @@ consteval int get_mirror_permutation1()
 	return x;
 }
 template<size_t N>
+constexpr __m256i get_mirror_permutation2()
+{
+	static_assert(N <= 8);
+	static_assert(N > 4);
+
+#define __f(i) ((i < N) ? (N - 1 - i) : i)
+	return _mm256_set_epi32(__f(7), __f(6), __f(5), __f(4), __f(3), __f(2), __f(1), __f(0));
+}
+export template<size_t N>
 fp ymm_accumulate(__m256 ymm)
 {
+	//TODO: fix for N > 4
 	static_assert(N >= 1 && N <= 8);
 	if constexpr (N > 1) ymm = _mm256_hadd_ps(ymm, _mm256_setzero_ps());
 	if constexpr (N > 2) ymm = _mm256_hadd_ps(ymm, _mm256_setzero_ps());
-	if constexpr (N > 4) ymm = _mm256_hadd_ps(ymm, _mm256_setzero_ps());
-	return ymm.m256_f32[0];
+	if constexpr (N > 4) ymm = _mm256_add_ps(ymm, _mm256_castps128_ps256(_mm256_extractf32x4_ps(ymm, 1)));
+	return _mm256_cvtss_f32(ymm);
 }
 
 export template<bool outer_convolution = false, bool as_product = false>
@@ -157,45 +172,27 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 					const float* pi = &input(output_y - kernel_y_offset, output_x - kernel_x_offset, input_image_id);
 
 					const auto load_mask = get_load_mask<kw>();
-					const auto mirror_permutation = [] { if constexpr (kw <= 4) return get_mirror_permutation1<kw>(); else return __m256i{}; }();
+					const auto mirror_permutation = [] { if constexpr (!mirror_kernel) return 0; else if constexpr (kw <= 4) return get_mirror_permutation1<kw>(); else return get_mirror_permutation2<kw>(); }();
 
 					__m256 accumulator = _mm256_setzero_ps();
-
-					for (size_t ky = 0; ky < kh; ++ky)
-					{
-						__m256 kernel_data = _mm256_maskload_ps(pk, load_mask);
-						if constexpr (mirror_kernel && kw > 4)
-						{
-							__debugbreak();
-						}
-						else if constexpr (mirror_kernel && kw <= 4)
-						{
-							kernel_data = _mm256_permute_ps(kernel_data, mirror_permutation);
-						}
-
-						accumulator = _mm256_fmadd_ps(
-							_mm256_maskload_ps(pi, load_mask), kernel_data, accumulator
-						);
-
-						pi += input_width;
-						if constexpr (mirror_kernel)
-							pk -= kernel_width;
-						else
-							pk += kernel_width;
-					}
+					__m256 kernel_data[kh];
+#define advance_kernel() if constexpr(mirror_kernel) pk -= kernel_width; else pk += kernel_width;
+#define maybe_load_kernel_row(_, i) if constexpr(i - 1 < kh) { kernel_data[i - 1] = _mm256_maskload_ps(pk, load_mask); advance_kernel(); }
+#define mirror_row4(i) { kernel_data[i - 1] = _mm256_permute_ps(kernel_data[i - 1], mirror_permutation); }
+#define mirror_row8(i) { kernel_data[i - 1] = _mm256_permutevar8x32_ps(kernel_data[i - 1], mirror_permutation); }
+#define maybe_mirror_row(_, i) if constexpr(i - 1 < kh && mirror_kernel) { if constexpr (kw <= 4) mirror_row4(i) else mirror_row8(i); }
+#define maybe_accumulate(_, i) if constexpr(i - 1 < kh) accumulator = _mm256_fmadd_ps(kernel_data[i - 1], _mm256_loadu_ps(pi + (i - 1) * input_width), accumulator);
+					repeat_call_arg2iota8(maybe_load_kernel_row, _);
+					repeat_call_arg2iota8(maybe_mirror_row, _);
+					repeat_call_arg2iota8(maybe_accumulate, _);
 
 					out += ymm_accumulate<kw>(accumulator);
 				};
 
 #define cover_kernel_size(w, h) else if (kernel_width == (w) && kernel_height == (h)) { apply_kernel_simd(size_constant<(h)>{}, size_constant<(w)>{}); }
-#define repeat_call_arg2iota(f, x) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7) f(x, 8)
-#define repeat_call_arg2iota1
-#define repeat_call_arg2iota2
 
 				if (false) {}
-				//repeat_call_arg2iota(repeat_call_arg2iota, cover_kernel_size)
-				//I don't know how to make it work so here it is, evaluated once manually
-				repeat_call_arg2iota(cover_kernel_size, 1) repeat_call_arg2iota(cover_kernel_size, 2) repeat_call_arg2iota(cover_kernel_size, 3) repeat_call_arg2iota(cover_kernel_size, 4) repeat_call_arg2iota(cover_kernel_size, 5) repeat_call_arg2iota(cover_kernel_size, 6) repeat_call_arg2iota(cover_kernel_size, 7) repeat_call_arg2iota(cover_kernel_size, 8)
+				repeat_call_arg2iota8(repeat_call_arg2iota8_1, cover_kernel_size)
 				else apply_kernel_default();
 			}
 		};
