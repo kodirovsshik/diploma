@@ -253,7 +253,8 @@ private:
 
 	static void check_no_overflow(idx_t idx, size_t dim)
 	{
-		xassert(idx >= 0 && (size_t)idx < dim, "tensor: invalid index {} for dim {}", idx, dim);
+		if constexpr (DO_DEBUG_CHECKS)
+			xassert(idx >= 0 && (size_t)idx < dim, "tensor: invalid index {} for dim {}", idx, dim);
 	}
 	void adjust_default_indexes(idx_t& y, idx_t& x, idx_t& z) const
 	{

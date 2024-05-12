@@ -1,6 +1,10 @@
 
 module;
-#include <immintrin.h>
+
+#define repeat_call_arg2iota8(f, x) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7) f(x, 8)
+#define repeat_call_arg2iota8_1(f, x) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7) f(x, 8)
+
+
 
 export module diploma.nn;
 
@@ -11,9 +15,9 @@ import diploma.image;
 import diploma.dataset;
 import diploma.serialization;
 import diploma.conio;
+import diploma.simd;
 
 import libksn.type_traits;
-
 
 import <variant>;
 import <memory>;
@@ -21,9 +25,6 @@ import <filesystem>;
 import <unordered_map>;
 
 import "defs.hpp";
-
-
-
 
 
 template<bool outer_convolution>
@@ -47,8 +48,7 @@ tensor_dims calculate_convolution_output_dims(tensor_dims in, tensor_dims kernel
 template<size_t N>
 using size_constant = std::integral_constant<size_t, N>;
 
-#define repeat_call_arg2iota8(f, x) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7) f(x, 8)
-#define repeat_call_arg2iota8_1(f, x) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7) f(x, 8)
+
 
 template<size_t N>
 constexpr __m256i get_load_mask()
@@ -57,6 +57,7 @@ constexpr __m256i get_load_mask()
 	static_assert(N > 0);
 #define __f(i) ((i < N) ? -1 : 0)
 	return _mm256_set_epi32(__f(7), __f(6), __f(5), __f(4), __f(3), __f(2), __f(1), __f(0));
+#undef __f
 }
 template<size_t N>
 consteval int get_mirror_permutation1()
@@ -79,16 +80,7 @@ constexpr __m256i get_mirror_permutation2()
 
 #define __f(i) ((i < N) ? (N - 1 - i) : i)
 	return _mm256_set_epi32(__f(7), __f(6), __f(5), __f(4), __f(3), __f(2), __f(1), __f(0));
-}
-export template<size_t N>
-fp ymm_accumulate(__m256 ymm)
-{
-	//TODO: fix for N > 4
-	static_assert(N >= 1 && N <= 8);
-	if constexpr (N > 1) ymm = _mm256_hadd_ps(ymm, _mm256_setzero_ps());
-	if constexpr (N > 2) ymm = _mm256_hadd_ps(ymm, _mm256_setzero_ps());
-	if constexpr (N > 4) ymm = _mm256_add_ps(ymm, _mm256_castps128_ps256(_mm256_extractf32x4_ps(ymm, 1)));
-	return _mm256_cvtss_f32(ymm);
+#undef __f
 }
 
 export template<bool outer_convolution = false, bool as_product = false>
@@ -166,7 +158,7 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 				apply_kernel_default();
 			else
 			{
-				auto apply_kernel_simd = [&]<size_t kh, size_t kw>(size_constant<kh>, size_constant<kw>)
+				auto apply_kernel_simd_full = [&]<size_t kh, size_t kw>(size_constant<kh>, size_constant<kw>)
 				{
 					const float* pk = &kernels(mirror_kernel ? kernel_height - 1 : 0, 0, kernel_id);
 					const float* pi = &input(output_y - kernel_y_offset, output_x - kernel_x_offset, input_image_id);
@@ -174,8 +166,8 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 					const auto load_mask = get_load_mask<kw>();
 					const auto mirror_permutation = [] { if constexpr (!mirror_kernel) return 0; else if constexpr (kw <= 4) return get_mirror_permutation1<kw>(); else return get_mirror_permutation2<kw>(); }();
 
-					__m256 accumulator = _mm256_setzero_ps();
-					__m256 kernel_data[kh];
+					avx256::fp32 accumulator{};
+					avx256::fp32 kernel_data[kh];
 #define advance_kernel() if constexpr(mirror_kernel) pk -= kernel_width; else pk += kernel_width;
 #define maybe_load_kernel_row(_, i) if constexpr(i - 1 < kh) { kernel_data[i - 1] = _mm256_maskload_ps(pk, load_mask); advance_kernel(); }
 #define mirror_row4(i) { kernel_data[i - 1] = _mm256_permute_ps(kernel_data[i - 1], mirror_permutation); }
@@ -186,14 +178,44 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 					repeat_call_arg2iota8(maybe_mirror_row, _);
 					repeat_call_arg2iota8(maybe_accumulate, _);
 
-					out += ymm_accumulate<kw>(accumulator);
+					out += avx_reduce_n_ct<kw>(accumulator);
+				};
+				auto apply_kernel_simd_linear = [&] {
+					using avx = avx256;
+					avx::fp32 acc{};
+					constexpr size_t avx_fp_size = avx::bytes / sizeof(float);
+					const size_t max_aligned_x = kernel_width / avx_fp_size * avx_fp_size;
+					const size_t leftover_x = kernel_width % avx_fp_size;
+
+					for (size_t y = 0; y < kernel_height; ++y)
+					{
+						const float* pi = &input(output_y, output_x, input_image_id);
+						const float* pk = &kernels(y, 0, kernel_id);
+						avx::fp32 idata, kdata;
+						for (size_t x = 0; x < max_aligned_x; x += avx_fp_size)
+						{
+							idata = avx::load_fp32(pi + x);
+							kdata = avx::load_fp32(pk + x);
+							acc = avx_fmadd(idata, kdata, acc);
+						}
+						idata = avx::load_fp32_n(pi + max_aligned_x, leftover_x);
+						kdata = avx::load_fp32_n(pk + max_aligned_x, leftover_x);
+						acc = avx_fmadd(idata, kdata, acc);
+					}
+
+					out = avx_reduce(acc);
 				};
 
-#define cover_kernel_size(w, h) else if (kernel_width == (w) && kernel_height == (h)) { apply_kernel_simd(size_constant<(h)>{}, size_constant<(w)>{}); }
+#define cover_kernel_size_full(w, h) else if (kernel_width == (w) && kernel_height == (h)) { apply_kernel_simd_full(size_constant<(h)>{}, size_constant<(w)>{}); }
 
 				if (false) {}
-				repeat_call_arg2iota8(repeat_call_arg2iota8_1, cover_kernel_size)
-				else apply_kernel_default();
+				//repeat_call_arg2iota8(repeat_call_arg2iota8_1, cover_kernel_size_full)
+				cover_kernel_size_full(3, 3)
+				cover_kernel_size_full(5, 5)
+				else 
+				{
+					apply_kernel_simd_linear();
+				}
 			}
 		};
 
@@ -203,6 +225,8 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 			else
 				return output_coord >= kernel_offset && output_coord + kernel_size < input_size + kernel_offset + 1;
 		};
+
+		
 
 		for (size_t output_y = 0; output_y < output_height; ++output_y)
 		{

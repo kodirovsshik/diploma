@@ -19,7 +19,8 @@ EXPORT_BEGIN
 
 using fp = float;
 
-using cpath = const std::filesystem::path&;
+using path = std::filesystem::path;
+using cpath = const path&;
 using idx_t = std::ptrdiff_t;
 
 constexpr size_t rng_seed_index = 0;

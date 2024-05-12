@@ -31,21 +31,23 @@ void main1()
 			kernel(y, x) = (y + 1) * ((fp)2 * x / (Nk - 1) - 1);
 
 	tensor out;
-	perform_full_convolution(img, kernel, out);
+	perform_full_convolution<true>(img, kernel, out);
 }
+
+
+thread_pool pool;
+
+
+cpath dataset_root = R"(C:\dataset_pneumonia\bmp)";
+//cpath model_path = dataset_root / "model.bin";
+cpath model_path = {};
+
+model m;
+
 
 int main()
 {
-	main1(); return 0;
-
-	thread_pool pool;
-
-
-
-	cpath dataset_root = R"(C:\dataset_pneumonia\bmp)";
-	cpath model_path = dataset_root / "model.bin";
-
-
+	//main1(); return 0;
 
 	fp learning_rate_base;
 	fp learning_rate_decay_rate;
@@ -54,10 +56,16 @@ int main()
 	auto learning_rate = [&] { return learning_rate_base * powf(learning_rate_decay_rate, -(fp)learning_rate_decay); };
 
 
+	struct learn_statistics
+	{
+		model:: model_statistics train, val;
+	};
+
+	std::vector<learn_statistics> stats_history;
+
+
 
 	static constexpr uint64_t serialization_magic = 0xC5DA6D48C547CDEC;
-
-	model m;
 
 	auto try_load_model = [&] {
 		std::ifstream fin(model_path, std::ios::in | std::ios::binary);
@@ -74,7 +82,12 @@ int main()
 		if (!deserializer.test_crc())
 			return false;
 
-		return deserializer(m) && deserializer.test_crc();
+		deserializer(stats_history);
+		deserializer(m);
+		if (!deserializer.test_crc())
+			return false;
+
+		return (bool)deserializer;
 	};
 	auto save_model = [&] {
 		std::ofstream fout(model_path, std::ios::out | std::ios::binary);
@@ -85,6 +98,7 @@ int main()
 		serializer(learning_rate_decay_rate);
 		serializer(learning_rate_decay);
 		serializer.write_crc();
+		serializer(stats_history);
 		serializer(m);
 		serializer.write_crc();
 		xassert(serializer, "Failed to save model");
@@ -102,8 +116,8 @@ int main()
 	else
 	{
 		std::println("failure");
+		//return -1;
 		std::println("New model will be created");
-		return -1;
 	}
 
 
@@ -115,11 +129,11 @@ int main()
 		return result;
 	};
 
-	//auto datagen_func = gen_data_pair_circle_square;
-	//auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 10);
-	//auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 50);
-	auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
-	auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
+	auto datagen_func = gen_data_pair_circle_square;
+	auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 10);
+	auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 50);
+	//auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
+	//auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
 
 
 
@@ -163,7 +177,7 @@ int main()
 
 
 
-	bool report_progress = true;
+	bool report_progress = false;
 
 
 
@@ -234,6 +248,7 @@ int main()
 
 	std::println("Training is running on {} thread{}", pool.size(), pool.size() == 1 ? "" : "s");
 
+
 	auto tui_bar = [] { std::println("{:-<49}", ""); };
 	
 	tui_bar();
@@ -241,22 +256,34 @@ int main()
 	std::println("epoch | loss      | acc    | loss      | acc    |");
 	tui_bar();
 
+
+
 	using stats_t = model::model_statistics;
 	stats_t last_train_stats{}, last_val_stats{};
 	fp best_val_loss = INFINITY;
+
+
 
 	size_t epochs_passed = 0;
 	const size_t epochs_limit = 5;
 	const size_t epoch_evaluation_period = 0;
 
+
+
 	auto print_stats = [&](stats_t stats) {
 		std::print(" {:>10.7f}| {:>7.4f}|", stats.loss, stats.accuracy);
 	};
 
+
+
 	cursor_pos_holder cursor{ cursor_pos_holder::noacquire };
+
+
 
 	const auto xclock = std::chrono::steady_clock::now;
 	decltype(xclock() - xclock()) dt_sum{};
+
+
 
 	while (true)
 	{
@@ -274,6 +301,8 @@ int main()
 				best_val_loss = last_val_stats.loss;
 			}
 		}
+
+		stats_history.push_back(learn_statistics{ .train = last_train_stats , .val = last_val_stats });
 
 		std::print("{:>6}|", epochs_passed);
 		print_stats(last_train_stats);

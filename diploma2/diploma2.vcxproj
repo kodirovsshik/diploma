@@ -178,6 +178,7 @@
     <ClCompile Include="image.ixx" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="nn.ixx" />
+    <ClCompile Include="simd.ixx" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\tmp\defs.hpp" />
