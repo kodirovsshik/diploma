@@ -181,6 +181,7 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 					out += avx_reduce_n_ct<kw>(accumulator);
 				};
 				auto apply_kernel_simd_linear = [&] {
+					dassert(kernel_x_offset == 0 && kernel_y_offset == 0 && !mirror_kernel);
 					using avx = avx256;
 					avx::fp32 acc{};
 					constexpr size_t avx_fp_size = avx::bytes / sizeof(float);
@@ -189,7 +190,7 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 
 					for (size_t y = 0; y < kernel_height; ++y)
 					{
-						const float* pi = &input(output_y, output_x, input_image_id);
+						const float* pi = &input(output_y + y, output_x, input_image_id);
 						const float* pk = &kernels(y, 0, kernel_id);
 						avx::fp32 idata, kdata;
 						for (size_t x = 0; x < max_aligned_x; x += avx_fp_size)
@@ -203,7 +204,7 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 						acc = avx_fmadd(idata, kdata, acc);
 					}
 
-					out = avx_reduce(acc);
+					out += avx_reduce(acc);
 				};
 
 #define cover_kernel_size_full(w, h) else if (kernel_width == (w) && kernel_height == (h)) { apply_kernel_simd_full(size_constant<(h)>{}, size_constant<(w)>{}); }
@@ -214,7 +215,10 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 				cover_kernel_size_full(5, 5)
 				else 
 				{
-					apply_kernel_simd_linear();
+					if constexpr (mirror_kernel)
+						apply_kernel_default();
+					else
+						apply_kernel_simd_linear();
 				}
 			}
 		};
@@ -236,7 +240,9 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 			{
 				const bool fully_in_bounds = in_bounds_y && kernel_fully_in_bounds_1d(input_width, output_x, kernel_x_offset, kernel_width);
 				
-				if (fully_in_bounds)
+				constexpr static bool use_simd = true;
+
+				if (use_simd && fully_in_bounds)
 					do_output_element(std::true_type{}, output_y, output_x);
 				else
 					do_output_element(std::false_type{}, output_y, output_x);
@@ -1031,14 +1037,14 @@ public:
 		auto worker = [&](size_t thread_id, size_t begin, size_t end) {
 			auto report = [&](size_t n) { if (should_report_progress && thread_id == 0) { cursor.restore(); std::print("fit: {}/{}", n, end - begin); }};
 
-			states[thread_id].used = true;
+			states[thread_id].used = begin != end;
 
 			report(0);
 			for (size_t i = begin; i < end; ++i)
 			{
 				const auto& [input, expected] = at(dataset, i);
 				accumulate_gradient_single(input, expected, states[thread_id].dLdparams, states[thread_id].stats);
-				report(i + 1);
+				report(i + 1 - begin);
 			}
 		};
 		pool.schedule_split_work(0, batch_size, worker);
@@ -1059,20 +1065,26 @@ public:
 	}
 
 	template<dataset_wrapper Dataset>
-	model_statistics evaluate(const Dataset& dataset, thread_pool& pool)
+	model_statistics evaluate(const Dataset& dataset, thread_pool& pool, bool should_report_progress = true)
 	{
 		assert_is_finished();
 
 		struct thread_state { model_statistics stats{}; };
 		std::vector<thread_state> states(pool.size());
 
+		cursor_pos_holder cursor;
+
 		auto worker = [&](size_t thread_id, size_t begin, size_t end) {
+			auto report = [&](size_t n) { if (should_report_progress && thread_id == 0) { cursor.restore(); std::print("evaluate: {}/{}", n, end - begin); }};
+
+			report(0);
 			for (size_t i = begin; i < end; ++i)
 			{
 				auto& state = states[thread_id];
 				const auto& [input, expected] = at(dataset, i);
 				const auto observed = this->predict(input);
 				update_statistics(state.stats, observed, expected);
+				report(i + 1 - begin);
 			}
 		};
 		pool.schedule_split_work(0, size(dataset), worker);

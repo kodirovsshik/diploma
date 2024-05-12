@@ -35,12 +35,11 @@ void main1()
 }
 
 
-thread_pool pool;
+thread_pool pool(-1);
 
 
 cpath dataset_root = R"(C:\dataset_pneumonia\bmp)";
-//cpath model_path = dataset_root / "model.bin";
-cpath model_path = {};
+cpath model_path = dataset_root / "test_cs3t5d16d8d2_mse.bin";
 
 model m;
 
@@ -58,10 +57,26 @@ int main()
 
 	struct learn_statistics
 	{
-		model:: model_statistics train, val;
+		model::model_statistics train, val;
 	};
 
 	std::vector<learn_statistics> stats_history;
+
+	auto save_stats = [&] (cpath p = "stats.txt") 
+	{
+		std::ofstream fout(p);
+		if (!fout.is_open())
+		{
+			std::println("Failed to save stats to {}", (char*)p.generic_u8string().data());
+			return;
+		}
+		for (size_t i = 0; i < stats_history.size(); ++i)
+		{
+			const auto& stats = stats_history[i];
+			std::println(fout, "{}, {:.10f}, {:.5f}, {:.10f}, {:.5f}", i, stats.train.loss, stats.train.accuracy, stats.val.loss, stats.val.accuracy);
+		}
+		std::println("Stats saved to {}", (char*)p.generic_u8string().data());
+	};
 
 
 
@@ -129,11 +144,11 @@ int main()
 		return result;
 	};
 
-	auto datagen_func = gen_data_pair_circle_square;
-	auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 10);
-	auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 50);
-	//auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
-	//auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
+	//auto datagen_func = gen_data_pair_circle_square;
+	//auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 25);
+	//auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 250);
+	auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
+	auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
 
 
 
@@ -145,13 +160,44 @@ int main()
 	auto create_model = [&] {
 		m.set_input_size(input_size(train_dataset));
 
-		m.add_layer(convolution_layer(5, 5, 10));
-		m.add_layer(convolution_layer(5, 5, 10));
-		m.add_layer(convolution_layer(5, 5, 10));
-		m.add_layer(pooling_layer(10, 10));
+		m.add_layer(convolution_layer(3, 3, 10));
+		m.add_layer(pooling_layer(2, 2));
+		m.add_layer(tied_bias_layer{});
+		m.add_layer(leaky_relu_layer{0.1f});
+
+		m.add_layer(convolution_layer(3, 3, 10));
+		m.add_layer(pooling_layer(2, 2));
+		m.add_layer(tied_bias_layer{});
+		m.add_layer(leaky_relu_layer{0.1f});
+
+		m.add_layer(convolution_layer(3, 3, 10));
+		m.add_layer(pooling_layer(2, 2));
+		m.add_layer(tied_bias_layer{});
+		m.add_layer(leaky_relu_layer{0.1f});
+
+		m.add_layer(convolution_layer(3, 3, 10));
+		m.add_layer(pooling_layer(2, 2));
+		m.add_layer(tied_bias_layer{});
+		m.add_layer(leaky_relu_layer{0.1f});
+
+		m.add_layer(convolution_layer(3, 3, 10));
+		m.add_layer(pooling_layer(2, 2));
+		m.add_layer(tied_bias_layer{});
+		m.add_layer(leaky_relu_layer{0.1f});
 
 		m.add_layer(flattening_layer{});
+
+		m.add_layer(dense_layer{ 16 });
+		m.add_layer(untied_bias_layer{});
+		m.add_layer(leaky_relu_layer{});
+
+		m.add_layer(dense_layer{ 8 });
+		m.add_layer(untied_bias_layer{});
+		m.add_layer(leaky_relu_layer{});
+
 		m.add_layer(dense_layer{ 2 });
+		m.add_layer(untied_bias_layer{});
+		m.add_layer(softmax_layer{});
 
 		m.finish(mse_loss_function{});
 
@@ -172,17 +218,18 @@ int main()
 
 
 
+	std::println("Model params: {}", m.get_total_parameter_count());
 	std::println("Batch size: {}", batch_size);
 	std::println("Learning rate: {}", learning_rate());
 
 
 
-	bool report_progress = false;
+	bool report_progress = true;
 
 
 
 	bool should_stop = false;
-	bool should_enter_menu = false;
+	bool should_enter_menu = true;
 
 	auto menu = [&] {
 		cursor_pos_holder cursor;
@@ -194,6 +241,8 @@ int main()
 		std::println(" live fitting display control: .");  ++lines;
 		std::println(" exit menu: (space)");  ++lines;
 		std::println(" exit menu for 1 iteration: `");  ++lines;
+		std::println(" exit program: ESC");  ++lines;
+		std::println(" save formatted stats history to stats.txt: a");  ++lines;
 
 		should_enter_menu = false;
 
@@ -230,6 +279,8 @@ int main()
 			case '+': mutate_learning_rate(+1); break;
 			case '-': mutate_learning_rate(-1); break;
 
+			case 'a': save_stats(); break;
+
 			case '`': should_enter_menu = true; [[fallthrough]];
 			case ' ': exit_menu = true; break;
 			//case PAUSE: if (DebuggerAttached()) __debugbreak();
@@ -265,8 +316,8 @@ int main()
 
 
 	size_t epochs_passed = 0;
-	const size_t epochs_limit = 5;
-	const size_t epoch_evaluation_period = 0;
+	const size_t epochs_limit = -1;
+	const size_t epoch_evaluation_period = 1;
 
 
 
@@ -290,7 +341,6 @@ int main()
 		if (epoch_evaluation_period && (epochs_passed % epoch_evaluation_period) == 0)
 		{
 			cursor.acquire();
-			std::print("Evaluating...");
 			last_val_stats = m.evaluate(val_dataset, pool);
 			cursor.release();
 

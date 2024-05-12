@@ -40,7 +40,7 @@ struct tensor_dims
 	}
 };
 
-#define TENSOR_USE_DATA_SPAN _KSN_IS_DEBUG_BUILD
+#define TENSOR_USE_DATA_SPAN 1
 
 class tensor
 {

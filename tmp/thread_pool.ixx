@@ -92,8 +92,10 @@ public:
 		return this->threads.size();
 	}
 
-	thread_pool(unsigned int n_threads = std::thread::hardware_concurrency())
+	thread_pool(unsigned int n_threads = -1)
 	{
+		if (n_threads == -1)
+			n_threads = std::thread::hardware_concurrency();
 		for (unsigned int i = 0; i < n_threads; ++i)
 			this->threads.emplace_back(&thread_pool::worker, this);
 		free_threads_count = n_threads;

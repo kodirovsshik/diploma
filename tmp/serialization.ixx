@@ -225,6 +225,9 @@ struct serialize_strategy_range
 		else
 			xassert(false, "Range size mismatch on deserialization");
 
+		if (size == 0)
+			return true;
+
 		if constexpr (trivially_serializeable_range<R>)
 		{
 			const auto& first_element = *r.begin();
