@@ -1073,6 +1073,9 @@ public:
 		pool.schedule_split_work(0, batch_size, worker);
 		pool.barrier();
 
+		cursor.restore();
+		std::println("fit: adjusting...");
+
 		const fp scale = -learning_rate / batch_size;
 
 		for (size_t j = 0; j < states.size(); ++j)

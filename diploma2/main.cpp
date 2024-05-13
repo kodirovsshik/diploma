@@ -39,7 +39,9 @@ thread_pool pool(-1);
 
 
 cpath dataset_root = R"(C:\dataset_pneumonia\bmp)";
-cpath model_path = dataset_root / "test_cs3t5d16d8d2_mse.bin";
+cs model_codename = "test_cs3t5d16d8d2_ce";
+cpath model_path = dataset_root / (model_codename + ".bin");
+cpath stats_path = dataset_root / (model_codename + ".stats");
 
 model m;
 
@@ -55,14 +57,25 @@ int main()
 	auto learning_rate = [&] { return learning_rate_base * powf(learning_rate_decay_rate, -(fp)learning_rate_decay); };
 
 
+
+	using stats_t = model::model_statistics;
+
 	struct learn_statistics
 	{
-		model::model_statistics train, val;
+		stats_t train, val;
 	};
 
 	std::vector<learn_statistics> stats_history;
+	learn_statistics last_stats{};
+	bool last_val_up_to_date = false;
 
-	auto save_stats = [&] (cpath p = "stats.txt") 
+
+
+	auto print_last_validation_stats = [&] {
+		std::println("Current validation loss: {:.10f}", last_stats.val.loss);
+		std::println("Current validation accuracy: {:.5f}", last_stats.val.accuracy); 
+	};
+	auto save_stats = [&] (cpath p = stats_path) __declspec(noinline)
 	{
 		std::ofstream fout(p);
 		if (!fout.is_open())
@@ -70,11 +83,20 @@ int main()
 			std::println("Failed to save stats to {}", (char*)p.generic_u8string().data());
 			return;
 		}
-		for (size_t i = 0; i < stats_history.size(); ++i)
-		{
-			const auto& stats = stats_history[i];
-			std::println(fout, "{}, {:.10f}, {:.5f}, {:.10f}, {:.5f}", i, stats.train.loss, stats.train.accuracy, stats.val.loss, stats.val.accuracy);
-		}
+
+		auto save_stat = [&](size_t i, const auto& stats) { std::println(fout, "{}, {:.10f}, {:.5f}", i, stats.loss, stats.accuracy); };
+
+		auto write_stats_type = [&](const char* msg, stats_t learn_statistics::*member) {
+			std::println(fout, "{}:", msg);
+
+			for (size_t i = 0; i < stats_history.size(); ++i)
+				save_stat(i, stats_history[i].*member);
+		};
+
+		write_stats_type("training", &learn_statistics::train);
+		write_stats_type("validation", &learn_statistics::val);
+		if (last_val_up_to_date)
+			save_stat(stats_history.size(), last_stats.val);
 		std::println("Stats saved to {}", (char*)p.generic_u8string().data());
 	};
 
@@ -97,8 +119,9 @@ int main()
 		if (!deserializer.test_crc())
 			return false;
 
-		deserializer(stats_history);
 		deserializer(m);
+		deserializer(stats_history);
+		deserializer(last_stats.val);
 		if (!deserializer.test_crc())
 			return false;
 
@@ -113,19 +136,25 @@ int main()
 		serializer(learning_rate_decay_rate);
 		serializer(learning_rate_decay);
 		serializer.write_crc();
-		serializer(stats_history);
 		serializer(m);
+		serializer(stats_history);
+		serializer(last_stats.val);
 		serializer.write_crc();
 		xassert(serializer, "Failed to save model");
 	};
 
 
 
+	size_t current_step = 0;
+
+
+
 	std::println("Dataset root: {}", (char*)dataset_root.generic_u8string().data());
-	std::print("Trying to load existing model... ");
+	std::print("Trying to load model {} ... ", model_codename);
 	if (try_load_model())
 	{
 		std::println("success");
+		print_last_validation_stats();
 		//TODO: enter online classification mode prompt
 	}
 	else
@@ -153,7 +182,7 @@ int main()
 
 
 	auto set_default_learning_rate = [&] {
-		learning_rate_base = 0.001f;
+		learning_rate_base = 0.1f;
 		learning_rate_decay_rate = 1.1f;
 		learning_rate_decay = 0;
 	};
@@ -199,7 +228,7 @@ int main()
 		m.add_layer(untied_bias_layer{});
 		m.add_layer(softmax_layer{});
 
-		m.finish(mse_loss_function{});
+		m.finish(cross_entropy_loss_function{});
 
 		set_default_learning_rate();
 	};
@@ -229,19 +258,23 @@ int main()
 
 
 	bool should_stop = false;
-	bool should_enter_menu = true;
+	bool should_enter_menu = false;
 
 	auto menu = [&] {
 		cursor_pos_holder cursor;
 		size_t lines = 0;
 
+		if (last_val_up_to_date)
+		{
+			print_last_validation_stats(); lines += 2;
+		}
 		std::println("Menu:"); ++lines;
 		std::println(" learning rate control: + -");  ++lines;
 		std::println(" batch size control: * / w s");  ++lines;
 		std::println(" live fitting display control: .");  ++lines;
 		std::println(" exit menu: (space)");  ++lines;
 		std::println(" exit menu for 1 iteration: `");  ++lines;
-		std::println(" exit program: ESC");  ++lines;
+		std::println(" exit program after exiting menu: ESC");  ++lines;
 		std::println(" save formatted stats history to stats.txt: a");  ++lines;
 
 		should_enter_menu = false;
@@ -257,7 +290,7 @@ int main()
 			std::print(" learning_rate: {} -> ", learning_rate());
 			learning_rate_decay -= decay_delta;
 			std::println("{}", learning_rate());
-			};
+		};
 
 		bool exit_menu = false;
 		while (!exit_menu)
@@ -309,13 +342,11 @@ int main()
 
 
 
-	using stats_t = model::model_statistics;
-	stats_t last_train_stats{}, last_val_stats{};
 	fp best_val_loss = INFINITY;
 
 
 
-	size_t epochs_passed = 0;
+	size_t epochs_passed = stats_history.size();
 	const size_t epochs_limit = -1;
 	const size_t epoch_evaluation_period = 1;
 
@@ -336,42 +367,94 @@ int main()
 
 
 
-	while (true)
-	{
-		if (epoch_evaluation_period && (epochs_passed % epoch_evaluation_period) == 0)
+	auto step_evaluate = [&]() __declspec(noinline) {
+		const bool eval_requested = epoch_evaluation_period != 0;
+		const bool eval_period_passed = epochs_passed % epoch_evaluation_period == 0;
+
+		if (!(eval_requested && eval_period_passed))
+			return;
+
+		cursor.acquire();
+		last_stats.val = m.evaluate(val_dataset, pool, report_progress);
+		cursor.release();
+		last_val_up_to_date = true;
+		clear_line();
+	};
+
+	auto step_save_gather = [&]() __declspec(noinline) {
+		stats_history.push_back(last_stats);
+
+		if (last_stats.val.loss < best_val_loss)
 		{
-			cursor.acquire();
-			last_val_stats = m.evaluate(val_dataset, pool);
-			cursor.release();
-
-			if (last_val_stats.loss < best_val_loss)
-			{
-				if (epochs_passed != 0)
-					save_model();
-				best_val_loss = last_val_stats.loss;
-			}
+			best_val_loss = last_stats.val.loss;
+			save_model();
 		}
+	};
 
-		stats_history.push_back(learn_statistics{ .train = last_train_stats , .val = last_val_stats });
+	size_t local_epochs_passed = 0;
+	auto step_fit = [&]() __declspec(noinline) {
 
-		std::print("{:>6}|", epochs_passed);
-		print_stats(last_train_stats);
-		print_stats(last_val_stats);
-		std::println("");
-
-		if (epochs_passed == epochs_limit) break;
-
-		while (_kbhit()) if (_getch() == ' ') should_enter_menu = true;
-		
-		if (should_enter_menu) menu();
-		if (should_stop) break;
+		cursor.acquire();
 
 		auto t1 = xclock();
-		last_train_stats = m.fit(train_dataset, pool, learning_rate(), batch_size, report_progress);
+		last_stats.train = m.fit(train_dataset, pool, learning_rate(), batch_size, report_progress);
 		auto t2 = xclock();
+		
+		cursor.release();
+		clear_line();
 
-		dt_sum += t2 - t1;
+		dt_sum += t2 - t1; 
+		++local_epochs_passed;
+	};
+
+	auto step_print_helper = [&](size_t epoch, learn_statistics stats) {
+		std::print("{:>6}|", epoch);
+		print_stats(stats.train);
+		print_stats(stats.val);
+		std::println("");
+		};
+	auto step_print = [&]() __declspec(noinline) {
+		step_print_helper(epochs_passed, last_stats);
+	};
+
+	auto step_advance = [&]() __declspec(noinline) {
 		++epochs_passed;
+
+		if (epochs_passed == epochs_limit)
+			should_stop = true;
+
+		last_val_up_to_date = false;
+	};
+
+	auto step_interactive = [&]() __declspec(noinline) {
+		while (_kbhit()) if (_getch() == ' ') should_enter_menu = true;
+		if (should_enter_menu) menu();
+	};
+
+	std::function<void()> steps[] = {
+		step_interactive,
+		step_evaluate,
+		step_interactive,
+		step_fit,
+		step_print,
+		step_save_gather,
+		step_advance,
+	};
+
+
+	for (const auto& entry : stats_history)
+		step_print_helper(idx_in(stats_history, entry), entry);
+
+
+	while (true)
+	{
+		if (current_step == std::size(steps))
+			current_step = 0;
+
+		steps[current_step++]();
+
+		if (should_stop)
+			break; 
 	}
 
 	tui_bar();
