@@ -65,6 +65,11 @@ export
 
 		avx256() = delete;
 
+		xinline static fp32 fp32_zero()
+		{
+			return _mm256_setzero_ps();
+		}
+
 		xinline static fp32 load_fp32(const float* p)
 		{
 			return _mm256_loadu_ps(p);

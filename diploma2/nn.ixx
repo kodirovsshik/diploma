@@ -1,8 +1,8 @@
 
 module;
 
-#define repeat_call_arg2iota8(f, x) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7) f(x, 8)
-#define repeat_call_arg2iota8_1(f, x) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7) f(x, 8)
+#define repeat_call_arg2iota8(f, x) f(x, 0) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7)
+#define repeat_call_arg2iota8_1(f, x) f(x, 0) f(x, 1) f(x, 2) f(x, 3) f(x, 4) f(x, 5) f(x, 6) f(x, 7)
 
 
 
@@ -70,6 +70,10 @@ consteval int get_mirror_permutation1()
 	{
 		x += (N - 1 - i) << (2 * i);
 	}
+	for (int i = N; i < 4; ++i)
+	{
+		x += 3 << (2 * i);
+	}
 	return x;
 }
 template<size_t N>
@@ -82,6 +86,17 @@ constexpr __m256i get_mirror_permutation2()
 	return _mm256_set_epi32(__f(7), __f(6), __f(5), __f(4), __f(3), __f(2), __f(1), __f(0));
 #undef __f
 }
+
+//Kept for future SIMD optimizations bugtesting
+//void check_anomaly_value(const fp& x, size_t idx = 0) //TODO remove
+//{
+//	xassert(x == x && fabs(x) < 1e3, "Anomaly at [{}]", idx);
+//}
+//void check_anomaly_tensor(const tensor& t)
+//{
+//	for (const auto& x : t)
+//		check_anomaly_value(x, idx_in(t, x));
+//}
 
 export template<bool outer_convolution = false, bool as_product = false>
 void perform_full_convolution(const tensor& input, const tensor& kernels, tensor& output)
@@ -104,7 +119,7 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 		else
 			return x;
 	};
-	auto kernel_at = [&](size_t y, size_t x, size_t kernel_id) {
+	auto kernel_at = [=, &kernel_idx_projection](size_t y, size_t x, size_t kernel_id) {
 		return kernels(
 			kernel_idx_projection(y, kernel_height),
 			kernel_idx_projection(x, kernel_width),
@@ -120,7 +135,7 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 	{
 		//convolution strategy:
 
-		auto do_output_element = [&]<bool fully_in_bounds>(std::bool_constant<fully_in_bounds>, size_t output_y, size_t output_x)
+		auto do_output_element = [=, &input, &output, &kernel_at, &kernels]<bool fully_in_bounds>(std::bool_constant<fully_in_bounds>, size_t output_y, size_t output_x)
 		{
 			auto get_coord_bounds = [](size_t input_size, size_t output_coord, size_t kernel_offset, size_t kernel_size) -> std::pair<size_t, size_t> {
 				if constexpr (fully_in_bounds)
@@ -137,7 +152,7 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 
 			auto& out = output(output_y, output_x, output_image_id);
 
-			auto apply_kernel_default = [&] {
+			auto apply_kernel_default = [=, &out, &input, &kernel_at] {
 				const auto [n_begin, n_end] = get_coord_bounds(input_height, output_y, kernel_y_offset, kernel_height);
 				const auto [m_begin, m_end] = get_coord_bounds(input_width, output_x, kernel_x_offset, kernel_width);
 
@@ -166,14 +181,16 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 					const auto load_mask = get_load_mask<kw>();
 					const auto mirror_permutation = [] { if constexpr (!mirror_kernel) return 0; else if constexpr (kw <= 4) return get_mirror_permutation1<kw>(); else return get_mirror_permutation2<kw>(); }();
 
-					avx256::fp32 accumulator{};
-					avx256::fp32 kernel_data[kh];
+					avx256::fp32 accumulator = avx256::fp32_zero();
+#define declare_kernel_data(_, i) [[maybe_unused]] avx256::fp32 kernel_data_ ## i;
 #define advance_kernel() if constexpr(mirror_kernel) pk -= kernel_width; else pk += kernel_width;
-#define maybe_load_kernel_row(_, i) if constexpr(i - 1 < kh) { kernel_data[i - 1] = _mm256_maskload_ps(pk, load_mask); advance_kernel(); }
-#define mirror_row4(i) { kernel_data[i - 1] = _mm256_permute_ps(kernel_data[i - 1], mirror_permutation); }
-#define mirror_row8(i) { kernel_data[i - 1] = _mm256_permutevar8x32_ps(kernel_data[i - 1], mirror_permutation); }
-#define maybe_mirror_row(_, i) if constexpr(i - 1 < kh && mirror_kernel) { if constexpr (kw <= 4) mirror_row4(i) else mirror_row8(i); }
-#define maybe_accumulate(_, i) if constexpr(i - 1 < kh) accumulator = _mm256_fmadd_ps(kernel_data[i - 1], _mm256_loadu_ps(pi + (i - 1) * input_width), accumulator);
+#define maybe_load_kernel_row(_, i) if constexpr(i < kh) { kernel_data_ ## i = _mm256_maskload_ps(pk, load_mask); advance_kernel(); }
+#define mirror_row4(i) { kernel_data_ ## i = _mm256_permute_ps(kernel_data_ ## i, mirror_permutation); }
+#define mirror_row8(i) { kernel_data_ ## i = _mm256_permutevar8x32_ps(kernel_data_ ## i, mirror_permutation); }
+#define maybe_mirror_row(_, i) if constexpr(i < kh && mirror_kernel) { if constexpr (kw <= 4) mirror_row4(i) else mirror_row8(i); }
+#define maybe_accumulate(_, i) if constexpr(i < kh) accumulator = _mm256_fmadd_ps(kernel_data_ ## i, _mm256_maskload_ps(pi + (i) * input_width, load_mask), accumulator);
+
+					repeat_call_arg2iota8(declare_kernel_data, _);
 					repeat_call_arg2iota8(maybe_load_kernel_row, _);
 					repeat_call_arg2iota8(maybe_mirror_row, _);
 					repeat_call_arg2iota8(maybe_accumulate, _);
@@ -181,27 +198,34 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 					out += avx_reduce_n_ct<kw>(accumulator);
 				};
 				auto apply_kernel_simd_linear = [&] {
-					dassert(kernel_x_offset == 0 && kernel_y_offset == 0 && !mirror_kernel);
+					xassert(kernel_x_offset == 0 && kernel_y_offset == 0 && !mirror_kernel, "");
+
 					using avx = avx256;
-					avx::fp32 acc{};
 					constexpr size_t avx_fp_size = avx::bytes / sizeof(float);
-					const size_t max_aligned_x = kernel_width / avx_fp_size * avx_fp_size;
+
+					const size_t max_fitting_x = kernel_width / avx_fp_size * avx_fp_size;
 					const size_t leftover_x = kernel_width % avx_fp_size;
+
+					auto acc = avx::fp32_zero();
+
+					const float* pi = &input(output_y, output_x, input_image_id);
+					const float* pk = &kernels(0, 0, kernel_id);
 
 					for (size_t y = 0; y < kernel_height; ++y)
 					{
-						const float* pi = &input(output_y + y, output_x, input_image_id);
-						const float* pk = &kernels(y, 0, kernel_id);
 						avx::fp32 idata, kdata;
-						for (size_t x = 0; x < max_aligned_x; x += avx_fp_size)
+						for (size_t x = 0; x < max_fitting_x; x += avx_fp_size)
 						{
 							idata = avx::load_fp32(pi + x);
 							kdata = avx::load_fp32(pk + x);
 							acc = avx_fmadd(idata, kdata, acc);
 						}
-						idata = avx::load_fp32_n(pi + max_aligned_x, leftover_x);
-						kdata = avx::load_fp32_n(pk + max_aligned_x, leftover_x);
+						idata = avx::load_fp32_n(pi + max_fitting_x, leftover_x);
+						kdata = avx::load_fp32_n(pk + max_fitting_x, leftover_x);
 						acc = avx_fmadd(idata, kdata, acc);
+
+						pi += input_width;
+						pk += kernel_width;
 					}
 
 					out += avx_reduce(acc);
@@ -210,7 +234,6 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 #define cover_kernel_size_full(w, h) else if (kernel_width == (w) && kernel_height == (h)) { apply_kernel_simd_full(size_constant<(h)>{}, size_constant<(w)>{}); }
 
 				if (false) {}
-				//repeat_call_arg2iota8(repeat_call_arg2iota8_1, cover_kernel_size_full)
 				cover_kernel_size_full(3, 3)
 				cover_kernel_size_full(5, 5)
 				else 
@@ -275,7 +298,7 @@ void perform_full_convolution(const tensor& input, const tensor& kernels, tensor
 
 
 
-constexpr fp rng_range = (fp)0.2;
+constexpr fp rng_range = (fp)0.3;
 
 enum serialized_obj_type
 {
@@ -1075,7 +1098,7 @@ public:
 		cursor_pos_holder cursor;
 
 		auto worker = [&](size_t thread_id, size_t begin, size_t end) {
-			auto report = [&](size_t n) { if (should_report_progress && thread_id == 0) { cursor.restore(); std::print("evaluate: {}/{}", n, end - begin); }};
+			auto report = [=, &cursor](size_t n) { if (should_report_progress && thread_id == 0) { cursor.restore(); std::print("evaluate: {}/{}", n, end - begin); }};
 
 			report(0);
 			for (size_t i = begin; i < end; ++i)
