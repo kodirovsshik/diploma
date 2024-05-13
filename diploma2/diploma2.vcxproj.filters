@@ -30,12 +30,6 @@
     <ClCompile Include="..\tmp\crc.ixx">
       <Filter>Module Files %28inherited%29</Filter>
     </ClCompile>
-    <ClCompile Include="..\tmp\serialization.ixx">
-      <Filter>Module Files %28inherited%29</Filter>
-    </ClCompile>
-    <ClCompile Include="..\tmp\thread_pool.ixx">
-      <Filter>Module Files %28inherited%29</Filter>
-    </ClCompile>
     <ClCompile Include="nn.ixx">
       <Filter>Module Files</Filter>
     </ClCompile>
@@ -61,6 +55,12 @@
       <Filter>Module Files</Filter>
     </ClCompile>
     <ClCompile Include="simd.ixx">
+      <Filter>Module Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tmp\serialization.ixx">
+      <Filter>Module Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\tmp\thread_pool.ixx">
       <Filter>Module Files</Filter>
     </ClCompile>
   </ItemGroup>

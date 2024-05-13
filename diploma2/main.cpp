@@ -35,15 +35,25 @@ void main1()
 }
 
 
+
 thread_pool pool(-1);
+
+model m;
 
 
 cpath dataset_root = R"(C:\dataset_pneumonia\bmp)";
-cs model_codename = "test_cs3t5d16d8d2_ce";
+cs model_codename = "test_cs3t5d8d2_ce";
 cpath model_path = dataset_root / (model_codename + ".bin");
 cpath stats_path = dataset_root / (model_codename + ".stats");
 
-model m;
+constexpr bool force_loaded_model = false;
+constexpr bool force_no_existing_model = true;
+constexpr bool force_override_model = false;
+
+const size_t custom_epochs_limit = 151;
+size_t epochs_limit = 151;
+const size_t epoch_evaluation_period = 1;
+
 
 
 int main()
@@ -55,6 +65,12 @@ int main()
 	int learning_rate_decay;
 
 	auto learning_rate = [&] { return learning_rate_base * powf(learning_rate_decay_rate, -(fp)learning_rate_decay); };
+
+	auto set_default_learning_rate = [&] {
+		learning_rate_base = 0.1f;
+		learning_rate_decay_rate = 1.1f;
+		learning_rate_decay = 7;
+		};
 
 
 
@@ -75,12 +91,12 @@ int main()
 		std::println("Current validation loss: {:.10f}", last_stats.val.loss);
 		std::println("Current validation accuracy: {:.5f}", last_stats.val.accuracy); 
 	};
-	auto save_stats = [&] (cpath p = stats_path) __declspec(noinline)
+	auto save_stats = [&] (bool echo = false)
 	{
-		std::ofstream fout(p);
+		std::ofstream fout(stats_path);
 		if (!fout.is_open())
 		{
-			std::println("Failed to save stats to {}", (char*)p.generic_u8string().data());
+			std::println("Failed to save stats to {}", (char*)stats_path.generic_u8string().data());
 			return;
 		}
 
@@ -97,7 +113,8 @@ int main()
 		write_stats_type("validation", &learn_statistics::val);
 		if (last_val_up_to_date)
 			save_stat(stats_history.size(), last_stats.val);
-		std::println("Stats saved to {}", (char*)p.generic_u8string().data());
+		if (echo)
+			std::println("Stats saved to {}", (char*)stats_path.generic_u8string().data());
 	};
 
 
@@ -136,11 +153,15 @@ int main()
 		serializer(learning_rate_decay_rate);
 		serializer(learning_rate_decay);
 		serializer.write_crc();
+
 		serializer(m);
 		serializer(stats_history);
 		serializer(last_stats.val);
 		serializer.write_crc();
+
 		xassert(serializer, "Failed to save model");
+
+		save_stats();
 	};
 
 
@@ -151,16 +172,29 @@ int main()
 
 	std::println("Dataset root: {}", (char*)dataset_root.generic_u8string().data());
 	std::print("Trying to load model {} ... ", model_codename);
-	if (try_load_model())
+	if (!force_override_model && try_load_model())
 	{
 		std::println("success");
+		if constexpr (force_no_existing_model)
+		{
+			std::println("Exiting due to force_no_existing_model=1");
+			return -1;
+		}
 		print_last_validation_stats();
 		//TODO: enter online classification mode prompt
 	}
 	else
 	{
-		std::println("failure");
-		//return -1;
+		if constexpr (force_override_model)
+			std::println("attempt skipped due to force_override_model");
+		else
+			std::println("failure");
+
+		if constexpr (force_loaded_model)
+		{
+			std::println("Exiting due to force_loaded_model=1");
+			return -1;
+		}
 		std::println("New model will be created");
 	}
 
@@ -181,11 +215,6 @@ int main()
 
 
 
-	auto set_default_learning_rate = [&] {
-		learning_rate_base = 0.1f;
-		learning_rate_decay_rate = 1.1f;
-		learning_rate_decay = 0;
-	};
 	auto create_model = [&] {
 		m.set_input_size(input_size(train_dataset));
 
@@ -215,10 +244,6 @@ int main()
 		m.add_layer(leaky_relu_layer{0.1f});
 
 		m.add_layer(flattening_layer{});
-
-		m.add_layer(dense_layer{ 16 });
-		m.add_layer(untied_bias_layer{});
-		m.add_layer(leaky_relu_layer{});
 
 		m.add_layer(dense_layer{ 8 });
 		m.add_layer(untied_bias_layer{});
@@ -253,29 +278,43 @@ int main()
 
 
 
+	size_t epochs_passed = stats_history.size();
+
+
+
 	bool report_progress = true;
 
 
 
-	bool should_stop = false;
-	bool should_enter_menu = false;
+	bool should_stop = epochs_limit == epochs_passed;
+	bool should_enter_menu = should_stop;
 
 	auto menu = [&] {
 		cursor_pos_holder cursor;
 		size_t lines = 0;
+		size_t last_epochs_limit = epochs_limit;
 
 		if (last_val_up_to_date)
 		{
 			print_last_validation_stats(); lines += 2;
 		}
+		std::println("Learning_rate: {} ", learning_rate()); ++lines;
+		std::print("Epochs limit: "); ++lines;
+		if (epochs_limit == -1)
+			std::println("inf");
+		else
+			std::println("{}", epochs_limit);
+
 		std::println("Menu:"); ++lines;
+		std::println(" epoch limit size control: e d");  ++lines;
+		std::println(" epoch limit presence control: r f");  ++lines;
 		std::println(" learning rate control: + -");  ++lines;
 		std::println(" batch size control: * / w s");  ++lines;
 		std::println(" live fitting display control: .");  ++lines;
-		std::println(" exit menu: (space)");  ++lines;
-		std::println(" exit menu for 1 iteration: `");  ++lines;
-		std::println(" exit program after exiting menu: ESC");  ++lines;
 		std::println(" save formatted stats history to stats.txt: a");  ++lines;
+		std::println(" exit program after exiting menu: ESC");  ++lines;
+		std::println(" exit menu for 1 iteration: `");  ++lines;
+		std::println(" exit menu: (space)");  ++lines;
 
 		should_enter_menu = false;
 
@@ -292,6 +331,15 @@ int main()
 			std::println("{}", learning_rate());
 		};
 
+		auto mutate_epochs_limit = [&](int delta) {
+			if (epochs_limit == -1)
+			{
+				std::println("Epoch limit is not set");
+				return;
+			}
+			mutate_var(epochs_limit, epochs_limit + delta);
+		};
+
 		bool exit_menu = false;
 		while (!exit_menu)
 		{
@@ -305,6 +353,10 @@ int main()
 			case 27: mutate_var(should_stop, !should_stop); break;
 			case 'w': mutate_var(batch_size, std::min<size_t>(max_batch_size, batch_size + 10)); break;
 			case 's': mutate_var(batch_size, std::max<size_t>(batch_size, 10) - 10); break;
+			case 'e': mutate_epochs_limit(+1); break;
+			case 'd': mutate_epochs_limit(-1); break;
+			case 'r': mutate_var(epochs_limit, last_epochs_limit == -1 ? custom_epochs_limit : last_epochs_limit); break;
+			case 'f': mutate_var(epochs_limit, -1); break;
 			case '*': mutate_var(batch_size, max_batch_size); break;
 			case '/': mutate_var(batch_size, small_batch_size); break;
 			case '.': mutate_var(report_progress, !report_progress); break;
@@ -312,7 +364,7 @@ int main()
 			case '+': mutate_learning_rate(+1); break;
 			case '-': mutate_learning_rate(-1); break;
 
-			case 'a': save_stats(); break;
+			case 'a': save_stats(true); break;
 
 			case '`': should_enter_menu = true; [[fallthrough]];
 			case ' ': exit_menu = true; break;
@@ -346,12 +398,6 @@ int main()
 
 
 
-	size_t epochs_passed = stats_history.size();
-	const size_t epochs_limit = -1;
-	const size_t epoch_evaluation_period = 1;
-
-
-
 	auto print_stats = [&](stats_t stats) {
 		std::print(" {:>10.7f}| {:>7.4f}|", stats.loss, stats.accuracy);
 	};
@@ -381,9 +427,11 @@ int main()
 		clear_line();
 	};
 
-	auto step_save_gather = [&]() __declspec(noinline) {
+	auto step_update_stats_history = [&]() __declspec(noinline) {
 		stats_history.push_back(last_stats);
+	};
 
+	auto step_save_model = [&]() __declspec(noinline) {
 		if (last_stats.val.loss < best_val_loss)
 		{
 			best_val_loss = last_stats.val.loss;
@@ -420,10 +468,10 @@ int main()
 	auto step_advance = [&]() __declspec(noinline) {
 		++epochs_passed;
 
+		last_val_up_to_date = false;
+
 		if (epochs_passed == epochs_limit)
 			should_stop = true;
-
-		last_val_up_to_date = false;
 	};
 
 	auto step_interactive = [&]() __declspec(noinline) {
@@ -437,7 +485,8 @@ int main()
 		step_interactive,
 		step_fit,
 		step_print,
-		step_save_gather,
+		step_update_stats_history,
+		step_save_model,
 		step_advance,
 	};
 
@@ -458,5 +507,5 @@ int main()
 	}
 
 	tui_bar();
-	std::print("{}s/epoch\n", dt_sum.count() * 1e-9 / epochs_passed);
+	std::print("{}s/epoch\n", dt_sum.count() * 1e-9 / (local_epochs_passed ? local_epochs_passed : 1));
 }
