@@ -19,6 +19,8 @@ EXPORT_BEGIN
 
 using fp = float;
 
+using csw = const std::string_view;
+using cs = const std::string&;
 using path = std::filesystem::path;
 using cpath = const path&;
 using idx_t = std::ptrdiff_t;
@@ -175,6 +177,12 @@ size_t get_max_idx(const R& range)
 	const auto enumerated_range_to_value = [](const auto& p) { return std::get<1>(p); };
 	const auto max_enumerated_pair = std::ranges::max(enumerated_range, {}, enumerated_range_to_value);
 	return (size_t)std::get<0>(max_enumerated_pair);
+}
+
+//MSVC bug workaround
+int __tlregdtor()
+{
+	return 0;
 }
 
 

@@ -1229,19 +1229,23 @@ private:
 
 	void accumulate_gradient_single(tensor in, const tensor& label, std::vector<tensor>& dLdparams, model_statistics& stats)
 	{
-		std::vector<tensor> activations;
-		tensor tmp;
-		for (size_t i = 0; i < m.layers.size(); ++i)
+		const size_t n_layers = m.layers.size();
+
+		static thread_local std::vector<tensor> activations;
+		activations.resize(n_layers + 1);
+
+		static thread_local tensor tmp;
+		for (size_t i = 0; i < n_layers; ++i)
 		{
-			activations.push_back(in);
+			activations[i] = in;
 			variant_invoke(m.layers[i], feed_forward, in, tmp);
 			std::swap(in, tmp);
 		}
-		activations.push_back(std::move(in));
+		activations[n_layers] = std::move(in);
 
 		update_statistics(stats, activations.back(), label);
 
-		tensor dLdactivations, dLdactivations_prev;
+		static thread_local tensor dLdactivations, dLdactivations_prev;
 		variant_invoke(m.loss_function.value(), df, activations.back(), label, dLdactivations);
 
 		for (size_t i = m.layers.size() - 1; true; --i)

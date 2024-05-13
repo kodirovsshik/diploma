@@ -17,15 +17,18 @@ import <ksn/ksn.hpp>;
 
 #define nodestruct static thread_local
 
-#define xassert(cond, fmt, ...) [&]{ auto sc = std::source_location::current();	\
-	if (!(cond))																									\
-	{																												\
-		std::println("\nASSERTION FAILED in {}:{}:", sc.file_name(), sc.line());	\
-		std::println(fmt __VA_OPT__(,) __VA_ARGS__);										\
-		std::println("STACK TRACE:\n{}", std::stacktrace::current());					\
-		__debugbreak();																					\
-		while (_getch() != 27); std::exit(-1);														\
-	}																												\
+#define xassert(cond, fmt, ...) [&]{ auto sc = std::source_location::current();			\
+	if (!(cond))																											\
+	{																														\
+		std::ofstream fout("crash.txt");																		\
+		std::println(fout, "\nASSERTION FAILED in {}:{}:", sc.file_name(), sc.line());	\
+		std::println(fout, fmt __VA_OPT__(,) __VA_ARGS__);										\
+		std::println(fout, "STACK TRACE:\n{}", std::stacktrace::current());					\
+		std::println("xassert() failed, see crash.txt");													\
+		fout.close();																									\
+		__debugbreak();																							\
+		while (_getch() != 27); std::exit(-1);																\
+	}																														\
 }()
 
 #define wprint(fmt, ...) { fputws(std::format(fmt __VA_OPT__(,) __VA_ARGS__).data(), stdout); }

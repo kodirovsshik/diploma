@@ -78,6 +78,12 @@ class tensor
 			data_span = get_data_span();
 #endif
 		}
+		template<class It, class Sent>
+		void absorb_range(It begin, Sent end, tensor_dims dims)
+		{
+			this->resize(dims);
+			std::copy(begin, end, this->data.get());
+		}
 	} m;
 
 	tensor(M&& m) : m(std::move(m)) {}
@@ -94,8 +100,7 @@ class tensor
 		xassert(dims.total() == std::size(r), "tensor::from_range: size mismatch");
 
 		M m;
-		m.allocate(dims);
-		std::copy(std::begin(r), std::end(r), m.data.get());
+		m.absorb_range(std::begin(r), std::end(r), dims);
 		return m;
 	}
 	template<class R>
@@ -122,7 +127,7 @@ public:
 
 	tensor& operator=(const tensor& other)
 	{
-		this->tensor::tensor(other);
+		this->m.absorb_range(other.begin(), other.end(), other.dims());
 		return *this;
 	}
 	tensor& operator=(tensor&& rhs) noexcept
