@@ -42,7 +42,7 @@ model m;
 
 
 cpath dataset_root = R"(C:\dataset_pneumonia\bmp)";
-cs model_codename = "test_cs3t5d8d2_ce";
+cs model_codename = "test_cs3D8t5d16d2_ce";
 cpath model_path = dataset_root / (model_codename + ".bin");
 cpath stats_path = dataset_root / (model_codename + ".stats");
 
@@ -50,7 +50,7 @@ constexpr bool force_loaded_model = false;
 constexpr bool force_no_existing_model = true;
 constexpr bool force_override_model = false;
 
-const size_t custom_epochs_limit = 151;
+const size_t custom_epochs_limit = 81;
 size_t epochs_limit = 151;
 const size_t epoch_evaluation_period = 1;
 
@@ -218,34 +218,34 @@ int main()
 	auto create_model = [&] {
 		m.set_input_size(input_size(train_dataset));
 
-		m.add_layer(convolution_layer(3, 3, 10));
+		m.add_layer(convolution_layer(3, 3, 8));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{0.1f});
 
-		m.add_layer(convolution_layer(3, 3, 10));
+		m.add_layer(convolution_layer(3, 3, 16));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{0.1f});
 
-		m.add_layer(convolution_layer(3, 3, 10));
+		m.add_layer(convolution_layer(3, 3, 32));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{0.1f});
 
-		m.add_layer(convolution_layer(3, 3, 10));
+		m.add_layer(convolution_layer(3, 3, 64));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{0.1f});
 
-		m.add_layer(convolution_layer(3, 3, 10));
+		m.add_layer(convolution_layer(3, 3, 128));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{0.1f});
 
 		m.add_layer(flattening_layer{});
 
-		m.add_layer(dense_layer{ 8 });
+		m.add_layer(dense_layer{ 32 });
 		m.add_layer(untied_bias_layer{});
 		m.add_layer(leaky_relu_layer{});
 
