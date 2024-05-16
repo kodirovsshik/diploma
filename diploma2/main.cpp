@@ -42,20 +42,25 @@ model m;
 
 
 cpath dataset_root = R"(C:\dataset_pneumonia\bmp)";
-cs model_codename = "test_cs3D8t5d16d2_ce";
+cs model_codename = "test_cs3D8Mt5d16d8d2_ce";
 cpath model_path = dataset_root / (model_codename + ".bin");
 cpath stats_path = dataset_root / (model_codename + ".stats");
 
-constexpr bool force_loaded_model = false;
-constexpr bool force_no_existing_model = true;
+constexpr bool force_loaded_model = true;
+constexpr bool force_no_existing_model = false;
 constexpr bool force_override_model = false;
 
-const size_t custom_epochs_limit = 81;
-size_t epochs_limit = 151;
+constexpr bool pause_on_increased_cost = true;
+
+const size_t custom_epochs_limit = -1;
+size_t epochs_limit = custom_epochs_limit;
 const size_t epoch_evaluation_period = 1;
 
 
 
+template<class T>
+static constexpr bool has_deserialize_method =
+	requires(T & t, deserializer_t deserializer) { { t.deserialize(deserializer) }; };
 int main()
 {
 	//main1(); return 0;
@@ -70,11 +75,11 @@ int main()
 		learning_rate_base = 0.1f;
 		learning_rate_decay_rate = 1.1f;
 		learning_rate_decay = 7;
-		};
+	};
 
 
 
-	using stats_t = model::model_statistics;
+	using stats_t = model::fit_statistics;
 
 	struct learn_statistics
 	{
@@ -82,6 +87,7 @@ int main()
 	};
 
 	std::vector<learn_statistics> stats_history;
+	model::eval_statistics model_stats{};
 	learn_statistics last_stats{};
 	bool last_val_up_to_date = false;
 
@@ -117,8 +123,6 @@ int main()
 			std::println("Stats saved to {}", (char*)stats_path.generic_u8string().data());
 	};
 
-
-
 	static constexpr uint64_t serialization_magic = 0xC5DA6D48C547CDEC;
 
 	auto try_load_model = [&] {
@@ -144,7 +148,7 @@ int main()
 
 		return (bool)deserializer;
 	};
-	auto save_model = [&] {
+	auto save_model = [&] (bool echo = false) {
 		std::ofstream fout(model_path, std::ios::out | std::ios::binary);
 		serializer_t serializer(fout);
 
@@ -161,7 +165,9 @@ int main()
 
 		xassert(serializer, "Failed to save model");
 
-		save_stats();
+		save_stats(echo);
+		if (echo)
+			std::println("Model saved to {}", (char*)model_path.generic_u8string().data());
 	};
 
 
@@ -171,13 +177,13 @@ int main()
 
 
 	std::println("Dataset root: {}", (char*)dataset_root.generic_u8string().data());
-	std::print("Trying to load model {} ... ", model_codename);
+	std::print("Trying to load model {}... ", model_codename);
 	if (!force_override_model && try_load_model())
 	{
 		std::println("success");
 		if constexpr (force_no_existing_model)
 		{
-			std::println("Exiting due to force_no_existing_model=1");
+			std::println("Exiting due to force_no_existing_model=true");
 			return -1;
 		}
 		print_last_validation_stats();
@@ -192,7 +198,7 @@ int main()
 
 		if constexpr (force_loaded_model)
 		{
-			std::println("Exiting due to force_loaded_model=1");
+			std::println("Exiting due to force_loaded_model=true");
 			return -1;
 		}
 		std::println("New model will be created");
@@ -223,7 +229,17 @@ int main()
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{0.1f});
 
+		m.add_layer(convolution_layer(3, 3, 12));
+		m.add_layer(pooling_layer(2, 2));
+		m.add_layer(tied_bias_layer{});
+		m.add_layer(leaky_relu_layer{0.1f});
+
 		m.add_layer(convolution_layer(3, 3, 16));
+		m.add_layer(pooling_layer(2, 2));
+		m.add_layer(tied_bias_layer{});
+		m.add_layer(leaky_relu_layer{0.1f});
+
+		m.add_layer(convolution_layer(3, 3, 24));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{0.1f});
@@ -233,19 +249,14 @@ int main()
 		m.add_layer(tied_bias_layer{});
 		m.add_layer(leaky_relu_layer{0.1f});
 
-		m.add_layer(convolution_layer(3, 3, 64));
-		m.add_layer(pooling_layer(2, 2));
-		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{0.1f});
-
-		m.add_layer(convolution_layer(3, 3, 128));
-		m.add_layer(pooling_layer(2, 2));
-		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{0.1f});
 
 		m.add_layer(flattening_layer{});
 
-		m.add_layer(dense_layer{ 32 });
+		m.add_layer(dense_layer{ 16 });
+		m.add_layer(untied_bias_layer{});
+		m.add_layer(leaky_relu_layer{});
+
+		m.add_layer(dense_layer{ 8 });
 		m.add_layer(untied_bias_layer{});
 		m.add_layer(leaky_relu_layer{});
 
@@ -286,7 +297,7 @@ int main()
 
 
 
-	bool should_stop = epochs_limit == epochs_passed;
+	bool should_stop = epochs_passed >= epochs_limit;
 	bool should_enter_menu = should_stop;
 
 	auto menu = [&] {
@@ -298,6 +309,12 @@ int main()
 		{
 			print_last_validation_stats(); lines += 2;
 		}
+		std::println("stats: TP={:.2f}%, FP={:.2f}%, FN={:.2f}%, TN={:.2f}%", 
+			model_stats.classifications[0][0] * 100,
+			model_stats.classifications[0][1] * 100,
+			model_stats.classifications[1][0] * 100,
+			model_stats.classifications[1][1] * 100
+		); ++lines;
 		std::println("Learning_rate: {} ", learning_rate()); ++lines;
 		std::print("Epochs limit: "); ++lines;
 		if (epochs_limit == -1)
@@ -311,7 +328,8 @@ int main()
 		std::println(" learning rate control: + -");  ++lines;
 		std::println(" batch size control: * / w s");  ++lines;
 		std::println(" live fitting display control: .");  ++lines;
-		std::println(" save formatted stats history to stats.txt: a");  ++lines;
+		std::println(" save formatted stats history: a");  ++lines;
+		std::println(" save model: q"); ++lines;
 		std::println(" exit program after exiting menu: ESC");  ++lines;
 		std::println(" exit menu for 1 iteration: `");  ++lines;
 		std::println(" exit menu: (space)");  ++lines;
@@ -365,6 +383,7 @@ int main()
 			case '-': mutate_learning_rate(-1); break;
 
 			case 'a': save_stats(true); break;
+			case 'q': save_model(true); break;
 
 			case '`': should_enter_menu = true; [[fallthrough]];
 			case ' ': exit_menu = true; break;
@@ -382,6 +401,8 @@ int main()
 
 
 
+	if (pause_on_increased_cost)
+		std::println("Running in highly interactive mode (pause_on_increasing_cost=true)");
 	std::println("Training is running on {} thread{}", pool.size(), pool.size() == 1 ? "" : "s");
 
 
@@ -420,11 +441,20 @@ int main()
 		if (!(eval_requested && eval_period_passed))
 			return;
 
+		const auto previous_val_loss = last_stats.val.loss;
+
 		cursor.acquire();
-		last_stats.val = m.evaluate(val_dataset, pool, report_progress);
+		auto [new_val_stats, new_model_stats] = m.evaluate(val_dataset, pool, report_progress);
 		cursor.release();
+
+		last_stats.val = new_val_stats;
+		model_stats = new_model_stats;
+
 		last_val_up_to_date = true;
 		clear_line();
+
+		if (pause_on_increased_cost && last_stats.val.loss > previous_val_loss)
+			should_enter_menu = true;
 	};
 
 	auto step_update_stats_history = [&]() __declspec(noinline) {
@@ -480,13 +510,12 @@ int main()
 	};
 
 	std::function<void()> steps[] = {
-		step_interactive,
 		step_evaluate,
 		step_interactive,
+		step_save_model,
 		step_fit,
 		step_print,
 		step_update_stats_history,
-		step_save_model,
 		step_advance,
 	};
 

@@ -1019,7 +1019,23 @@ public:
 		return result;
 	}
 
-	struct model_statistics
+	struct eval_statistics
+	{
+		fp classifications[2][2];
+
+		void merge(const eval_statistics& other)
+		{
+			for (size_t i = 0; i < 4; ++i)
+				this->classifications[i / 2][i % 2] += other.classifications[i / 2][i % 2];
+		}
+		void normalize(size_t observations)
+		{
+			for (size_t i = 0; i < 4; ++i)
+				this->classifications[i / 2][i % 2] /= observations;
+		}
+	};
+
+	struct fit_statistics
 	{
 		fp loss;
 		fp accuracy;
@@ -1027,7 +1043,7 @@ public:
 	private:
 		friend class model;
 
-		void merge(const model_statistics& other)
+		void merge(const fit_statistics& other)
 		{
 			loss += other.loss;
 			accuracy += other.accuracy;
@@ -1039,8 +1055,23 @@ public:
 		}
 	};
 
+	void update_statistics(fit_statistics& stats, const tensor& observed, const tensor& expected)
+	{
+		const size_t idx_observed = get_max_idx(observed);
+		const size_t idx_expected = get_max_idx(expected);
+
+		stats.accuracy += idx_observed == idx_expected;
+		stats.loss += this->loss(observed, expected);
+	}
+	void update_statistics(eval_statistics& stats, const tensor& observed, const tensor& expected)
+	{
+		const size_t idx_observed = get_max_idx(observed);
+		const size_t idx_expected = get_max_idx(expected);
+		stats.classifications[idx_observed][idx_expected]++;
+	}
+
 	template<dataset_wrapper Dataset>
-	model_statistics fit(Dataset& dataset, thread_pool& pool, fp learning_rate, size_t batch_size = SIZE_MAX, bool should_report_progress = false)
+	fit_statistics fit(Dataset& dataset, thread_pool& pool, fp learning_rate, size_t batch_size = SIZE_MAX, bool should_report_progress = false)
 	{
 		assert_is_finished();
 
@@ -1050,7 +1081,7 @@ public:
 		struct thread_state
 		{
 			std::vector<tensor> dLdparams;
-			model_statistics stats{};
+			fit_statistics stats{};
 			bool used = false;
 		};
 		std::vector<thread_state> states(pool.size(), { std::vector<tensor>{ m.layers.size() }});
@@ -1087,15 +1118,15 @@ public:
 			pool.barrier();
 		}
 
-		return merge_stats(states, batch_size);
+		return merge_stats(states, &thread_state::stats, batch_size);
 	}
 
 	template<dataset_wrapper Dataset>
-	model_statistics evaluate(const Dataset& dataset, thread_pool& pool, bool should_report_progress = true)
+	std::tuple<fit_statistics, eval_statistics> evaluate(const Dataset& dataset, thread_pool& pool, bool should_report_progress = true)
 	{
 		assert_is_finished();
 
-		struct thread_state { model_statistics stats{}; };
+		struct thread_state { fit_statistics fit_stats{}; eval_statistics eval_stats{}; };
 		std::vector<thread_state> states(pool.size());
 
 		cursor_pos_holder cursor;
@@ -1109,14 +1140,18 @@ public:
 				auto& state = states[thread_id];
 				const auto& [input, expected] = at(dataset, i);
 				const auto observed = this->predict(input);
-				update_statistics(state.stats, observed, expected);
+				update_statistics(state.fit_stats, observed, expected);
+				update_statistics(state.eval_stats, observed, expected);
 				report(i + 1 - begin);
 			}
 		};
 		pool.schedule_split_work(0, size(dataset), worker);
 		pool.barrier();
 
-		return merge_stats(states, size(dataset));
+		return {
+			merge_stats(states, &thread_state::fit_stats, size(dataset)),
+			merge_stats(states, &thread_state::eval_stats, size(dataset))
+		};
 	}
 
 	void serialize(serializer_t& serializer) const
@@ -1222,12 +1257,6 @@ private:
 		return true;
 	}
 
-	void update_statistics(model_statistics& stats, const tensor& observed, const tensor& expected)
-	{
-		stats.loss += this->loss(observed, expected);
-		stats.accuracy += get_max_idx(observed) == get_max_idx(expected);
-	}
-
 	size_t get_layer_parameter_count(size_t i) const noexcept
 	{
 		xassert(i < get_layer_count(), "Invalid layer index");
@@ -1243,17 +1272,17 @@ private:
 		return loss(predict(input), expected);
 	}
 
-	template<class R>
-	model_statistics merge_stats(const R& states, size_t normalizer)
+	template<class Stats, class R>
+	Stats merge_stats(const R& states, Stats std::ranges::range_value_t<R>::* member, size_t normalizer)
 	{
-		model_statistics result{};
+		Stats result{};
 		for (auto state : states)
-			result.merge(state.stats);
+			result.merge(state.*member);
 		result.normalize(normalizer);
 		return result;
 	}
 
-	void accumulate_gradient_single(tensor in, const tensor& label, std::vector<tensor>& dLdparams, model_statistics& stats)
+	void accumulate_gradient_single(tensor in, const tensor& label, std::vector<tensor>& dLdparams, fit_statistics& stats)
 	{
 		const size_t n_layers = m.layers.size();
 
