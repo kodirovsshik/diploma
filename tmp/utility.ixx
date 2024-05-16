@@ -25,15 +25,14 @@ using path = std::filesystem::path;
 using cpath = const path&;
 using idx_t = std::ptrdiff_t;
 
-constexpr size_t rng_seed_index = 0;
+constexpr size_t rng_seed_index = 1;
 const size_t rng_seed = std::hash<size_t>{}(rng_seed_index);
+thread_local std::mt19937_64 thread_rng(rng_seed);
 
 
 template<class R>
 void randomize_range(R&& range, std::ranges::range_value_t<R> from, std::ranges::range_value_t<R> to)
 {
-	static thread_local std::mt19937_64 thread_rng(rng_seed);
-
 	std::uniform_real_distribution<std::ranges::range_value_t<R>> distr(from, to);
 	for (auto&& x : range)
 		x = distr(thread_rng);

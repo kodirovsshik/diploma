@@ -42,7 +42,7 @@ model m;
 
 
 cpath dataset_root = R"(C:\dataset_pneumonia\bmp)";
-cs model_codename = "test_cs3D8Mt5d16d8d2_ce";
+cs model_codename = "test_cs3tD8M5d16d8d2_ce_s1";
 cpath model_path = dataset_root / (model_codename + ".bin");
 cpath stats_path = dataset_root / (model_codename + ".stats");
 
@@ -58,12 +58,10 @@ const size_t epoch_evaluation_period = 1;
 
 
 
-template<class T>
-static constexpr bool has_deserialize_method =
-	requires(T & t, deserializer_t deserializer) { { t.deserialize(deserializer) }; };
 int main()
 {
-	//main1(); return 0;
+	//std::filesystem::remove(model_path); return 101;
+	//main1(); return 102;
 
 	fp learning_rate_base;
 	fp learning_rate_decay_rate;
@@ -72,9 +70,9 @@ int main()
 	auto learning_rate = [&] { return learning_rate_base * powf(learning_rate_decay_rate, -(fp)learning_rate_decay); };
 
 	auto set_default_learning_rate = [&] {
-		learning_rate_base = 0.1f;
+		learning_rate_base = 0.05f;
 		learning_rate_decay_rate = 1.1f;
-		learning_rate_decay = 7;
+		learning_rate_decay = 0;
 	};
 
 
@@ -227,27 +225,27 @@ int main()
 		m.add_layer(convolution_layer(3, 3, 8));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{0.1f});
+		m.add_layer(leaky_relu_layer{ 0.1f });
 
 		m.add_layer(convolution_layer(3, 3, 12));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{0.1f});
+		m.add_layer(leaky_relu_layer{ 0.1f });
 
 		m.add_layer(convolution_layer(3, 3, 16));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{0.1f});
+		m.add_layer(leaky_relu_layer{ 0.1f });
 
 		m.add_layer(convolution_layer(3, 3, 24));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{0.1f});
+		m.add_layer(leaky_relu_layer{ 0.1f });
 
 		m.add_layer(convolution_layer(3, 3, 32));
 		m.add_layer(pooling_layer(2, 2));
 		m.add_layer(tied_bias_layer{});
-		m.add_layer(leaky_relu_layer{0.1f});
+		m.add_layer(leaky_relu_layer{ 0.1f });
 
 
 		m.add_layer(flattening_layer{});
