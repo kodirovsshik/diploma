@@ -214,8 +214,8 @@ int main()
 	//auto datagen_func = gen_data_pair_circle_square;
 	//auto val_dataset = load_dataset(tag_holder<stub_dataset>{}, "validation", datagen_func, 25);
 	//auto train_dataset = load_dataset(tag_holder<stub_dataset>{}, "training", datagen_func, 250);
-	auto val_dataset = load_dataset(tag_holder<dataset>{}, "validation", dataset_root / "val");
-	auto train_dataset = load_dataset(tag_holder<dataset>{}, "trainning", dataset_root / "train");
+	auto val_dataset = load_dataset(tag_holder<folder_labels_split_objects_dataset>{}, "validation", dataset_root / "val");
+	auto train_dataset = load_dataset(tag_holder<folder_labels_split_objects_dataset>{}, "trainning", dataset_root / "train");
 
 
 

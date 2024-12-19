@@ -61,7 +61,7 @@ tensor_dims input_size(dataset_wrapper auto const& dataset)
 	return input_dims;
 }
 
-class dataset
+class folder_labels_split_objects_dataset
 {
 	using nstr = std::filesystem::path::string_type;
 
@@ -91,7 +91,7 @@ class dataset
 	}
 
 public:
-	dataset(cpath root)
+	folder_labels_split_objects_dataset(cpath root)
 	{
 		read_labels(root);
 
@@ -107,6 +107,6 @@ public:
 	std::vector<dataset_pair> data;
 };
 
-static_assert(dataset_wrapper<dataset>);
+static_assert(dataset_wrapper<folder_labels_split_objects_dataset>);
 
 EXPORT_END
