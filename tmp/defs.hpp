@@ -31,6 +31,8 @@ import <ksn/ksn.hpp>;
 	}																														\
 }()
 
+#define assert_throw(cond, msg, ...) { if (!(cond)) throw std::format(L##msg __VA_OPT__(,) __VA_ARGS__); }
+
 #define wprint(fmt, ...) { fputws(std::format(fmt __VA_OPT__(,) __VA_ARGS__).data(), stdout); }
 
 

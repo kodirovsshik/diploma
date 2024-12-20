@@ -77,7 +77,6 @@ T iabs(T x)
 }
 
 
-#define assert_throw(cond, msg, ...) { if (!(cond)) throw std::format(L##msg __VA_OPT__(,) __VA_ARGS__); }
 
 template<class fp_t>
 bool image<fp_t>::read(cpath filename, image_settings settings)

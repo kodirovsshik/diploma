@@ -443,6 +443,43 @@ class softmax_layer
 	}
 };
 
+class sigmoid_layer
+{
+	friend class model;
+
+	static fp activate(fp x)
+	{
+		return 1 / (1 + std::exp(- x));
+	}
+	static fp derivative(fp f)
+	{
+		return f * f * f / (1 - f);
+	}
+
+	tensor_dims init(tensor_dims input_dims) const
+	{
+		return input_dims;
+	}
+
+	void feed_forward(tensor& in, tensor& out) const
+	{
+		for (auto& x : in)
+			x = activate(x);
+		std::swap(in, out);
+	}
+	void feed_back(const tensor&, const tensor& out, tensor& dLda, tensor& dLda_prev) const
+	{
+		for (size_t i = 0; i < dLda.size(); ++i)
+			dLda[i] *= derivative(out[i]);
+
+		std::swap(dLda, dLda_prev);
+	}
+	void accumulate_gradient(const tensor&, const tensor&, tensor&) const
+	{
+
+	}
+};
+
 
 
 class dense_layer
@@ -778,6 +815,7 @@ class flattening_layer
 		deserializer(in_dims);
 	}
 };
+
 
 
 

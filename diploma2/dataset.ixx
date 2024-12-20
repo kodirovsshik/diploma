@@ -107,6 +107,37 @@ public:
 	std::vector<dataset_pair> data;
 };
 
+class csv_dataset
+{
+public:
+	enum class names_options
+	{
+		maybe_present, //try parse the first row; if strings found, row discarded
+		assume_present, //always discard the first row
+		assume_absent, //never discard the first row
+	};
+
+	csv_dataset(cpath filename, names_options names = names_options::assume_absent, std::string_view delim = ",;\t", std::string_view newline = "\n")
+	{
+		assert_throw(names != names_options::maybe_present, "not implemented");
+		std::ifstream fin(filename);
+		assert_throw(fin.is_open(), "Could not open \"{}\"", filename.native_string());
+	
+		auto next_is = [&](std::string_view sw)
+		{
+			return sw.contains(fin.peek());
+		};
+		auto nextchar = [&]
+		{
+			return (char)fin.get();
+		};
+		
+
+	}
+
+	std::vector<dataset_pair> data;
+};
+
 static_assert(dataset_wrapper<folder_labels_split_objects_dataset>);
 
 EXPORT_END
